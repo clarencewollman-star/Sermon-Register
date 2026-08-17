@@ -6,7 +6,7 @@ type ApiService={id:string;service_date:string;service_type:"LEHR"|"GEBET";song:
 type EntryType=""|"Lehr"|"Gebet";
 const nav=["Register","Texts","Vorraden","Songs","People"];
 const blankDraft=()=>({date:"",type:"" as EntryType,song:"",songBy:"",text:"",textBy:"",vorrade:"",notes:""});
-const apiUrl=()=>`http://${window.location.hostname}:3001/services`;
+const apiUrl=()=>{const pagePort=Number(window.location.port||"3000");return`http://${window.location.hostname}:${pagePort+1}/services`};
 const fromApi=(row:ApiService):Service=>{const d=new Date(`${row.service_date}T12:00:00`);return{id:row.id,date:d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),day:d.toLocaleDateString("en-US",{weekday:"long"}),type:row.service_type==="LEHR"?"Lehr":"Gebet",song:row.song,songBy:row.song_by,text:row.text_title,textBy:row.text_by,vorrade:row.vorrade||"—",status:row.lehr_status==="IN_PROGRESS"?"In progress":row.lehr_status==="FINISHED"?"Finished":"—",notes:row.notes||""}};
 
 export default function Home(){

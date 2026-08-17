@@ -4,10 +4,10 @@ services:
     pull_policy: always
     restart: unless-stopped
     ports:
-      - "3000:3000"
-      - "3001:3001"
+      - "3810:3000"
+      - "3811:3001"
     environment:
-      APP_ORIGIN: http://localhost:3000
+      APP_ORIGIN: http://localhost:3810
       API_HOST: 0.0.0.0
     volumes:
-      - ./data:/app/data
+      - /docker/sermonregister/data:/app/data
