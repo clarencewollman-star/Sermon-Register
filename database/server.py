@@ -92,7 +92,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", self.allowed_origin())
         self.send_header("Vary", "Origin")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
@@ -149,6 +149,80 @@ class Handler(BaseHTTPRequestHandler):
                 con.commit()
                 record = next(row for row in service_rows(con) if row["id"] == service_id)
                 self.json(record, 201)
+        except Exception as exc:
+            self.json({"error": str(exc)}, 500)
+
+    def do_PUT(self):
+        if self.path != "/services":
+            return self.json({"error": "Not found"}, 404)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            required = ["id", "date", "type", "song", "songBy", "text", "textBy"]
+            if any(not str(body.get(key, "")).strip() for key in required):
+                return self.json({"error": "Required fields are missing"}, 400)
+            if body["type"] not in ("LEHR", "GEBET"):
+                return self.json({"error": "Invalid service type"}, 400)
+
+            with connect() as con:
+                existing = con.execute(
+                    "SELECT id FROM services WHERE id = ?", (body["id"],)
+                ).fetchone()
+                if not existing:
+                    return self.json({"error": "Service not found"}, 404)
+
+                song_id = master_id(con, "songs", "song_number", body["song"].strip())
+                song_by = master_id(con, "people", "name", body["songBy"].strip())
+                text_id = master_id(con, "texts", "title", body["text"].strip())
+                text_by = master_id(con, "people", "name", body["textBy"].strip())
+                vorrade_id = None
+                lehr_status = None
+                if body["type"] == "LEHR":
+                    if str(body.get("vorrade", "")).strip():
+                        vorrade_id = master_id(
+                            con, "vorraden", "title", body["vorrade"].strip()
+                        )
+                    lehr_status = body.get("status", "IN_PROGRESS")
+                    if lehr_status not in ("IN_PROGRESS", "FINISHED"):
+                        return self.json({"error": "Invalid Lehr status"}, 400)
+
+                con.execute(
+                    """UPDATE services
+                       SET service_date = ?, service_type = ?, song_id = ?,
+                           song_by_person_id = ?, text_id = ?, text_by_person_id = ?,
+                           vorrade_id = ?, vorrade_by_person_id = NULL,
+                           lehr_status = ?, notes = ?, updated_at = ?
+                     WHERE id = ?""",
+                    (
+                        body["date"], body["type"], song_id, song_by, text_id,
+                        text_by, vorrade_id, lehr_status,
+                        str(body.get("notes", "")).strip() or None,
+                        now(), body["id"],
+                    ),
+                )
+                con.commit()
+                record = next(row for row in service_rows(con) if row["id"] == body["id"])
+                self.json(record)
+        except Exception as exc:
+            self.json({"error": str(exc)}, 500)
+
+    def do_DELETE(self):
+        if self.path != "/services":
+            return self.json({"error": "Not found"}, 404)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            service_id = str(body.get("id", "")).strip()
+            if not service_id:
+                return self.json({"error": "Service id is required"}, 400)
+            with connect() as con:
+                deleted = con.execute(
+                    "DELETE FROM services WHERE id = ?", (service_id,)
+                )
+                if not deleted.rowcount:
+                    return self.json({"error": "Service not found"}, 404)
+                con.commit()
+                self.json({"id": service_id})
         except Exception as exc:
             self.json({"error": str(exc)}, 500)
 

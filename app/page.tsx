@@ -6,6 +6,7 @@ declare const __APP_VERSION__: string;
 
 type Service = {
   id: string;
+  dateValue: string;
   date: string;
   day: string;
   type: "Lehr" | "Gebet";
@@ -58,6 +59,7 @@ const fromApi = (row: ApiService): Service => {
   const date = new Date(`${row.service_date}T12:00:00`);
   return {
     id: row.id,
+    dateValue: row.service_date,
     date: date.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
@@ -89,6 +91,7 @@ export default function Home() {
   const [mobile, setMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [kind, setKind] = useState<EntryType>("");
+  const [editKind, setEditKind] = useState<EntryType>("");
   const [selected, setSelected] = useState<Service | null>(null);
   const [rowVersion, setRowVersion] = useState(0);
   const [saveError, setSaveError] = useState("");
@@ -154,6 +157,61 @@ export default function Home() {
     const result = (await response.json()) as ApiService & { error?: string };
     if (!response.ok) throw new Error(result.error || "Could not save service");
     setItems((current) => [fromApi(result), ...current]);
+  }
+
+  async function saveEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected || !editKind) return;
+    const form = new FormData(event.currentTarget);
+    setSaveError("");
+    try {
+      const response = await fetch(apiUrl(), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: selected.id,
+          date: String(form.get("editDate")),
+          type: editKind.toUpperCase(),
+          song: String(form.get("editSong")),
+          songBy: String(form.get("editSongBy")),
+          text: String(form.get("editText")),
+          textBy: String(form.get("editTextBy")),
+          vorrade: String(form.get("editVorrade") || ""),
+          status: String(form.get("editStatus") || "IN_PROGRESS"),
+          notes: String(form.get("editNotes") || ""),
+        }),
+      });
+      const result = (await response.json()) as ApiService & { error?: string };
+      if (!response.ok) throw new Error(result.error || "Could not update service");
+      const updated = fromApi(result);
+      setItems((current) =>
+        current.map((service) => (service.id === updated.id ? updated : service)),
+      );
+      setSelected(null);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not update service");
+    }
+  }
+
+  async function deleteSelectedService() {
+    if (!selected) return;
+    if (!window.confirm("Delete this service? This cannot be undone.")) return;
+    setSaveError("");
+    try {
+      const response = await fetch(apiUrl(), {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: selected.id }),
+      });
+      const result = (await response.json()) as { id?: string; error?: string };
+      if (!response.ok) throw new Error(result.error || "Could not delete service");
+      setItems((current) =>
+        current.filter((service) => service.id !== selected.id),
+      );
+      setSelected(null);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not delete service");
+    }
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -244,6 +302,12 @@ export default function Home() {
   function changeSection(section: string) {
     setActive(section);
     setSidebarOpen(false);
+  }
+
+  function openService(service: Service) {
+    setSaveError("");
+    setEditKind(service.type);
+    setSelected(service);
   }
 
   function startNew() {
@@ -562,10 +626,10 @@ export default function Home() {
                           key={service.id}
                           role="button"
                           tabIndex={0}
-                          onClick={() => setSelected(service)}
+                          onClick={() => openService(service)}
                           onKeyDown={(event) =>
                             (event.key === "Enter" || event.key === " ") &&
-                            setSelected(service)
+                            openService(service)
                           }
                         >
                           <td className="service-date">
@@ -602,7 +666,7 @@ export default function Home() {
                       type="button"
                       className="list-group-item list-group-item-action p-3"
                       key={service.id}
-                      onClick={() => setSelected(service)}
+                      onClick={() => openService(service)}
                     >
                       <span className="d-flex justify-content-between gap-3">
                         <strong>
@@ -829,75 +893,216 @@ export default function Home() {
       )}
 
       {selected && (
-        <>
-          <aside
-            className="offcanvas offcanvas-end show service-detail"
-            tabIndex={-1}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="service-detail-title"
-          >
-            <div className="offcanvas-header border-bottom">
-              <div>
-                <span
-                  className={`badge ${selected.type === "Lehr" ? "text-bg-primary" : "text-bg-warning"}`}
-                >
-                  {selected.type}
-                </span>
-                <h5 className="offcanvas-title mt-2" id="service-detail-title">
-                  {selected.text}
-                </h5>
-                <small className="text-body-secondary">
-                  {selected.day}, {selected.date}
-                </small>
-              </div>
-              <button
-                type="button"
-                className="btn-close"
-                aria-label="Close details"
-                onClick={() => setSelected(null)}
-              />
-            </div>
-            <div className="offcanvas-body">
-              <dl className="detail-list">
-                {[
-                  ["Song", selected.song],
-                  ["Song by", selected.songBy],
-                  ["Text by", selected.textBy],
-                  ["Vorrade", selected.vorrade],
-                  ["Status", selected.status],
-                  ["Notes", selected.notes],
-                ].map(([label, value]) => (
-                  <div key={label}>
-                    <dt>{label}</dt>
-                    <dd>{value || "—"}</dd>
-                  </div>
-                ))}
-              </dl>
-              <div className="card bg-body-tertiary border-0 mt-4">
-                <div className="card-body">
-                  <h6 className="card-title">
-                    <i className="bi bi-file-earmark-pdf me-2" />
-                    PDF attachments
-                  </h6>
-                  <p className="card-text small text-body-secondary">
-                    Documents for this service stay private.
-                  </p>
-                  <button className="btn btn-primary btn-sm" type="button">
-                    <i className="bi bi-plus-lg me-1" />
-                    Add PDF
-                  </button>
+        <div
+          className="modal fade show d-block service-edit-modal"
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-service-title"
+        >
+          <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div className="modal-content card card-primary card-outline mb-0">
+              <div className="modal-header">
+                <div>
+                  <small className="text-uppercase text-body-secondary">
+                    Existing register entry
+                  </small>
+                  <h5 className="modal-title" id="edit-service-title">
+                    Edit service
+                  </h5>
                 </div>
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Close editor"
+                  onClick={() => setSelected(null)}
+                />
               </div>
+              <form key={selected.id} onSubmit={saveEdit}>
+                <div className="modal-body">
+                  {saveError && (
+                    <div className="alert alert-danger" role="alert">
+                      <i className="bi bi-exclamation-triangle-fill me-2" />
+                      {saveError}
+                    </div>
+                  )}
+                  <div className="row g-3">
+                    <div className="col-md-6">
+                      <label className="form-label" htmlFor="edit-service-date">
+                        Date
+                      </label>
+                      <input
+                        className="form-control"
+                        id="edit-service-date"
+                        name="editDate"
+                        type="date"
+                        defaultValue={selected.dateValue}
+                        required
+                      />
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label" htmlFor="edit-service-type">
+                        Service type
+                      </label>
+                      <select
+                        className="form-select"
+                        id="edit-service-type"
+                        name="editType"
+                        value={editKind}
+                        onChange={(event) =>
+                          setEditKind(event.target.value as EntryType)
+                        }
+                        required
+                      >
+                        <option>Lehr</option>
+                        <option>Gebet</option>
+                      </select>
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label" htmlFor="edit-service-song">
+                        Song
+                      </label>
+                      <input
+                        className="form-control"
+                        id="edit-service-song"
+                        name="editSong"
+                        list="songs-list"
+                        defaultValue={selected.song}
+                        required
+                      />
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label" htmlFor="edit-service-song-by">
+                        Song by
+                      </label>
+                      <input
+                        className="form-control"
+                        id="edit-service-song-by"
+                        name="editSongBy"
+                        list="people-list"
+                        defaultValue={selected.songBy}
+                        required
+                      />
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label" htmlFor="edit-service-text">
+                        Text
+                      </label>
+                      <input
+                        className="form-control"
+                        id="edit-service-text"
+                        name="editText"
+                        list="texts-list"
+                        defaultValue={selected.text}
+                        required
+                      />
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label" htmlFor="edit-service-text-by">
+                        Text by
+                      </label>
+                      <input
+                        className="form-control"
+                        id="edit-service-text-by"
+                        name="editTextBy"
+                        list="people-list"
+                        defaultValue={selected.textBy}
+                        required
+                      />
+                    </div>
+                    {editKind === "Lehr" && (
+                      <>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="edit-service-vorrade">
+                            Vorrade
+                          </label>
+                          <input
+                            className="form-control"
+                            id="edit-service-vorrade"
+                            name="editVorrade"
+                            list="vorraden-list"
+                            defaultValue={selected.vorrade === "—" ? "" : selected.vorrade}
+                          />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="edit-service-status">
+                            Lehr status
+                          </label>
+                          <select
+                            className="form-select"
+                            id="edit-service-status"
+                            name="editStatus"
+                            defaultValue={
+                              selected.status === "Finished"
+                                ? "FINISHED"
+                                : "IN_PROGRESS"
+                            }
+                          >
+                            <option value="IN_PROGRESS">In progress</option>
+                            <option value="FINISHED">Finished</option>
+                          </select>
+                        </div>
+                      </>
+                    )}
+                    <div className={editKind === "Lehr" ? "col-md-6" : "col-12"}>
+                      <label className="form-label" htmlFor="edit-service-notes">
+                        Notes
+                      </label>
+                      <textarea
+                        className="form-control"
+                        id="edit-service-notes"
+                        name="editNotes"
+                        rows={3}
+                        defaultValue={selected.notes}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="card bg-body-tertiary border-0 mt-4 mb-0">
+                    <div className="card-body d-flex flex-wrap align-items-center justify-content-between gap-3">
+                      <div>
+                        <h6 className="mb-1">
+                          <i className="bi bi-file-earmark-pdf me-2" />
+                          PDF attachments
+                        </h6>
+                        <small className="text-body-secondary">
+                          Documents for this service stay private.
+                        </small>
+                      </div>
+                      <button className="btn btn-outline-primary btn-sm" type="button">
+                        <i className="bi bi-plus-lg me-1" />
+                        Add PDF
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="modal-footer justify-content-between">
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={deleteSelectedService}
+                  >
+                    <i className="bi bi-trash3 me-1" />
+                    Delete service
+                  </button>
+                  <div className="d-flex gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary"
+                      onClick={() => setSelected(null)}
+                    >
+                      Cancel
+                    </button>
+                    <button className="btn btn-primary" type="submit">
+                      <i className="bi bi-check-lg me-1" />
+                      Save changes
+                    </button>
+                  </div>
+                </div>
+              </form>
             </div>
-          </aside>
-          <button
-            type="button"
-            className="offcanvas-backdrop fade show detail-backdrop"
-            aria-label="Close service details"
-            onClick={() => setSelected(null)}
-          />
-        </>
+          </div>
+        </div>
       )}
 
       <datalist id="songs-list" />

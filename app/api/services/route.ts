@@ -1,11 +1,11 @@
 const databaseUrl = process.env.SERMON_API_URL ?? "http://127.0.0.1:3001/services";
 
-async function forward(method: "GET" | "POST", request?: Request) {
+async function forward(method: "GET" | "POST" | "PUT" | "DELETE", request?: Request) {
   try {
     const response = await fetch(databaseUrl, {
       method,
-      headers: method === "POST" ? { "Content-Type": "application/json" } : undefined,
-      body: method === "POST" ? await request?.text() : undefined,
+      headers: method !== "GET" ? { "Content-Type": "application/json" } : undefined,
+      body: method !== "GET" ? await request?.text() : undefined,
       cache: "no-store",
     });
     return new Response(await response.text(), {
@@ -28,4 +28,12 @@ export async function GET() {
 
 export async function POST(request: Request) {
   return forward("POST", request);
+}
+
+export async function PUT(request: Request) {
+  return forward("PUT", request);
+}
+
+export async function DELETE(request: Request) {
+  return forward("DELETE", request);
 }
