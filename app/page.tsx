@@ -8,7 +8,7 @@ type ApiService={id:string;service_date:string;service_type:"LEHR"|"GEBET";song:
 type EntryType=""|"Lehr"|"Gebet";
 const nav=["Register","Texts","Vorraden","Songs","People"];
 const blankDraft=()=>({date:"",type:"" as EntryType,song:"",songBy:"",text:"",textBy:"",vorrade:"",notes:""});
-const apiUrl=()=>{const pagePort=Number(window.location.port||"3000");return`http://${window.location.hostname}:${pagePort+1}/services`};
+const apiUrl=()=>"/api/services";
 const fromApi=(row:ApiService):Service=>{const d=new Date(`${row.service_date}T12:00:00`);return{id:row.id,date:d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),day:d.toLocaleDateString("en-US",{weekday:"long"}),type:row.service_type==="LEHR"?"Lehr":"Gebet",song:row.song,songBy:row.song_by,text:row.text_title,textBy:row.text_by,vorrade:row.vorrade||"—",status:row.lehr_status==="IN_PROGRESS"?"In progress":row.lehr_status==="FINISHED"?"Finished":"—",notes:row.notes||""}};
 
 export default function Home(){
@@ -16,7 +16,7 @@ export default function Home(){
  const [draft,setDraft]=useState(blankDraft);
  useEffect(()=>{const media=window.matchMedia("(max-width: 520px)");const update=()=>setMobile(media.matches);update();media.addEventListener("change",update);return()=>media.removeEventListener("change",update)},[]);
  useEffect(()=>{const timer=window.setTimeout(()=>{const saved=sessionStorage.getItem("sermon-register-service-draft");if(saved){try{setDraft({...blankDraft(),...JSON.parse(saved)});setRowVersion(v=>v+1)}catch{sessionStorage.removeItem("sermon-register-service-draft")}}},0);return()=>window.clearTimeout(timer)},[]);
- useEffect(()=>{fetch(apiUrl()).then(r=>r.json()).then(rows=>setItems((rows as ApiService[]).map(fromApi))).catch(()=>setSaveError("The local database connection is not running."))},[]);
+ useEffect(()=>{fetch(apiUrl()).then(r=>{if(!r.ok)throw new Error("Database unavailable");return r.json()}).then(rows=>setItems((rows as ApiService[]).map(fromApi))).catch(()=>setSaveError("The SQLite database could not be reached. Check the container logs."))},[]);
  const visible=useMemo(()=>items.filter(x=>(filter==="All services"||x.type===filter)&&Object.values(x).join(" ").toLowerCase().includes(query.toLowerCase())),[items,query,filter]);
  async function createService(payload:Record<string,string>){setSaveError("");const response=await fetch(apiUrl(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const result=await response.json() as ApiService&{error?:string};if(!response.ok)throw new Error(result.error||"Could not save service");setItems(v=>[fromApi(result),...v])}
  async function save(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!kind)return;const f=new FormData(e.currentTarget);try{await createService({date:String(f.get("date")),type:kind.toUpperCase(),song:String(f.get("song")),songBy:String(f.get("songBy")),text:String(f.get("text")),textBy:String(f.get("textBy")),vorrade:String(f.get("vorrade")||""),notes:String(f.get("notes")||"")});setOpen(false)}catch(err){setSaveError(err instanceof Error?err.message:"Could not save service")}}

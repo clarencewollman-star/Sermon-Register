@@ -158,4 +158,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     initialize_database()
+    print(f"[database] SQLite ready at {DB_PATH}", flush=True)
+    print(f"[database] API listening on {API_HOST}:{API_PORT}", flush=True)
     ThreadingHTTPServer((API_HOST, API_PORT), Handler).serve_forever()

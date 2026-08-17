@@ -30,7 +30,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Docker Compose pulls the versioned image `ghcr.io/clarencewollman-star/sermonregister:0.1.0`. Open <http://localhost:3810>. The host directory `/docker/sermonregister/data` is mounted into the container, so database records survive image and container replacement.
+Docker Compose pulls the versioned image `ghcr.io/clarencewollman-star/sermonregister:0.1.0`. Open <http://localhost:3810>. The web app securely forwards database requests to SQLite inside the same container, so no second public port is needed. The host directory `/docker/sermonregister/data` is mounted into the container, so database records survive image and container replacement.
 
 The `main` image becomes available after this pull request is merged and the GitHub Actions publish job succeeds. If the GitHub package is private, sign in first with `docker login ghcr.io`.
 
