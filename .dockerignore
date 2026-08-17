@@ -1,0 +1,12 @@
+.git
+.github
+.next
+.wrangler
+dist
+node_modules
+data/*.db
+data/*.db-*
+data/uploads
+data/backups
+.env*
+sources
