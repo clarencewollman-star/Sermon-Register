@@ -1,10 +1,12 @@
 services:
   sermon-register:
-    image: ghcr.io/clarencewollman-star/sermonregister:0.1.0
+    image: ghcr.io/clarencewollman-star/sermonregister:main
+    container_name: sermonregister
     pull_policy: always
     restart: unless-stopped
     ports:
       - "3810:3000"
+      - "3811:3001"
     environment:
       APP_ORIGIN: http://localhost:3810
       API_HOST: 0.0.0.0
