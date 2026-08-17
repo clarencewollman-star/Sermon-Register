@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(
@@ -75,10 +76,22 @@ def service_rows(con):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def allowed_origin(self):
+        origin = self.headers.get("Origin")
+        if not origin or origin == APP_ORIGIN:
+            return origin or APP_ORIGIN
+
+        origin_host = urlparse(origin).hostname
+        request_host = urlparse(f"//{self.headers.get('Host', '')}").hostname
+        if origin_host and origin_host == request_host:
+            return origin
+        return APP_ORIGIN
+
     def send_json_headers(self, status=200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", APP_ORIGIN)
+        self.send_header("Access-Control-Allow-Origin", self.allowed_origin())
+        self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
