@@ -1,0 +1,13 @@
+services:
+  sermon-register:
+    build: .
+    image: sermon-register:local
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    environment:
+      APP_ORIGIN: http://localhost:3000
+      API_HOST: 0.0.0.0
+    volumes:
+      - ./data:/app/data

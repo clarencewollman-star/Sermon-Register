@@ -1,0 +1,22 @@
+FROM node:24-bookworm-slim AS build
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@11.19.0 --activate
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY . .
+RUN pnpm run build
+
+FROM node:24-bookworm-slim AS runtime
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production
+ENV APP_ORIGIN=http://localhost:3000
+ENV API_HOST=0.0.0.0
+COPY --from=build /app /app
+RUN mkdir -p /app/data/uploads/services /app/data/uploads/vorraden /app/data/backups \
+    && chmod +x /app/docker-entrypoint.sh
+EXPOSE 3000 3001
+VOLUME ["/app/data"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
