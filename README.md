@@ -30,9 +30,9 @@ docker compose pull
 docker compose up -d
 ```
 
-Docker Compose always pulls the latest `main` image from `ghcr.io/clarencewollman-star/sermonregister:main`. The current image contains application version `0.1.2`. Open <http://localhost:3810>. The web app securely forwards database requests to SQLite inside the same container. The host directory `/docker/sermonregister/data` is mounted into the container, so database records survive image and container replacement.
+Docker Compose always pulls the latest `main` image from `ghcr.io/clarencewollman-star/sermonregister:main`. The current image contains application version `0.2.0`. Open <http://localhost:3810>. The web app securely forwards database requests to SQLite inside the same container. The host directory `/docker/sermonregister/data` is mounted into the container, so database records survive image and container replacement.
 
-The `main` image becomes available after this pull request is merged and the GitHub Actions publish job succeeds. If the GitHub package is private, sign in first with `docker login ghcr.io`.
+The `main` image is refreshed whenever the GitHub Actions publish job succeeds on the `main` branch. If the GitHub package is private, sign in first with `docker login ghcr.io`.
 
 If the app is opened with a server name or private IP instead of `localhost`, set `APP_ORIGIN` in `compose.yaml` to the exact browser origin, including port `3810` when used.
 
@@ -48,7 +48,11 @@ The repository's package visibility settings determine who can download that ima
 
 ## Application version
 
-The current release is `0.1.2`. It is shown in the application header, stored in the image's OCI version label, and published as the GHCR tag `0.1.2`. `package.json` is the release-version source used by the frontend and GitHub Actions. Portainer follows the rolling `main` image tag from `compose.yaml`.
+The current release is `0.2.0`. It is shown in the application header, stored in the image's OCI version label, and published as the GHCR tag `0.2.0`. `package.json` is the release-version source used by the frontend and GitHub Actions. Portainer follows the rolling `main` image tag from `compose.yaml`.
+
+## Interface design
+
+All application layout and control styling is based on [AdminLTE 4](https://github.com/ColorlibHQ/AdminLTE) and Bootstrap 5. AdminLTE is included locally in the Docker image; the application does not depend on a design CDN or subscription service.
 
 ## Private data and backups
 
