@@ -30,7 +30,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Docker Compose pulls the versioned image `ghcr.io/clarencewollman-star/sermonregister:0.1.0`. Open <http://localhost:3810>. The web app securely forwards database requests to SQLite inside the same container, so no second public port is needed. The host directory `/docker/sermonregister/data` is mounted into the container, so database records survive image and container replacement.
+Docker Compose always pulls the latest `main` image from `ghcr.io/clarencewollman-star/sermonregister:main`. The current image contains application version `0.1.1`. Open <http://localhost:3810>. The web app securely forwards database requests to SQLite inside the same container. The host directory `/docker/sermonregister/data` is mounted into the container, so database records survive image and container replacement.
 
 The `main` image becomes available after this pull request is merged and the GitHub Actions publish job succeeds. If the GitHub package is private, sign in first with `docker login ghcr.io`.
 
@@ -48,7 +48,7 @@ The repository's package visibility settings determine who can download that ima
 
 ## Application version
 
-The current release is `0.1.0`. It is shown in the application header, stored in the image's OCI version label, and published as the GHCR tag `0.1.0`. `package.json` is the release-version source used by the frontend and GitHub Actions. Before publishing a later release, update that version and the version pinned in `compose.yaml` together.
+The current release is `0.1.1`. It is shown in the application header, stored in the image's OCI version label, and published as the GHCR tag `0.1.1`. `package.json` is the release-version source used by the frontend and GitHub Actions. Portainer follows the rolling `main` image tag from `compose.yaml`.
 
 ## Private data and backups
 
