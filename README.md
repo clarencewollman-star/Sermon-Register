@@ -26,10 +26,13 @@ Open <http://localhost:3000>. The SQLite database is created automatically at `d
 ## Run with Docker
 
 ```bash
-docker compose up --build -d
+docker compose pull
+docker compose up -d
 ```
 
-Open <http://localhost:3000>. The `./data` directory is mounted into the container, so database records survive image and container replacement.
+Docker Compose pulls `ghcr.io/clarencewollman-star/sermon-register:main`. Open <http://localhost:3000>. The `./data` directory is mounted into the container, so database records survive image and container replacement.
+
+The `main` image becomes available after this pull request is merged and the GitHub Actions publish job succeeds. If the GitHub package is private, sign in first with `docker login ghcr.io`.
 
 If the app is opened with a server name or private IP instead of `localhost`, set `APP_ORIGIN` in `compose.yaml` to the exact browser origin, for example `https://sermons.example.test`.
 
