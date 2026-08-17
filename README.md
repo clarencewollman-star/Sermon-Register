@@ -30,7 +30,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Docker Compose pulls the versioned image `ghcr.io/clarencewollman-star/sermon-register:0.1.0`. Open <http://localhost:3810>. The host directory `/docker/sermonregister/data` is mounted into the container, so database records survive image and container replacement.
+Docker Compose pulls the versioned image `ghcr.io/clarencewollman-star/sermonregister:0.1.0`. Open <http://localhost:3810>. The host directory `/docker/sermonregister/data` is mounted into the container, so database records survive image and container replacement.
 
 The `main` image becomes available after this pull request is merged and the GitHub Actions publish job succeeds. If the GitHub package is private, sign in first with `docker login ghcr.io`.
 
@@ -41,7 +41,7 @@ If the app is opened with a server name or private IP instead of `localhost`, se
 The workflow in `.github/workflows/docker-image.yml` builds the Docker image for pull requests. After changes reach `main`, it also publishes the image to GitHub Container Registry as:
 
 ```text
-ghcr.io/clarencewollman-star/sermon-register
+ghcr.io/clarencewollman-star/sermonregister
 ```
 
 The repository's package visibility settings determine who can download that image.

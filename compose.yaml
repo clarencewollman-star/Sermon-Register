@@ -1,6 +1,6 @@
 services:
   sermon-register:
-    image: ghcr.io/clarencewollman-star/sermon-register:0.1.0
+    image: ghcr.io/clarencewollman-star/sermonregister:0.1.0
     pull_policy: always
     restart: unless-stopped
     ports:
