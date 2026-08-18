@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from server import SCHEMA_PATH, master_id, now
+from server import ensure_schema, master_id, now, optional_master_id
 
 
 MEANINGFUL_COLUMNS = (
@@ -29,7 +29,7 @@ def clean(value):
 
 def service_date(value):
     raw = clean(value)
-    for date_format in ("%d-%b-%y", "%m/%d/%Y"):
+    for date_format in ("%d-%b-%y", "%m/%d/%Y", "%m/%d/%y"):
         try:
             return datetime.strptime(raw, date_format).date().isoformat()
         except ValueError:
@@ -38,6 +38,20 @@ def service_date(value):
 
 
 def canonical_record(row):
+    if "Date" in row and "Date Acual" not in row:
+        return {
+            "date": service_date(row.get("Date")),
+            "type": "LEHR",
+            "song": "",
+            "song_by": "",
+            "text": clean(row.get("Text")),
+            "text_by": "",
+            "vorrade": "",
+            "vorrade_by": "",
+            "notes": "",
+            "status": None,
+        }
+
     kind = clean(row.get("Column 1")).upper()
     if kind not in ("LEHR", "GEBET"):
         raise ValueError(f"Unsupported service type: {row.get('Column 1')}")
@@ -59,13 +73,14 @@ def canonical_record(row):
         "vorrade": vorrade,
         "vorrade_by": clean(row.get("Vorrade By")) if vorrade else "",
         "notes": notes,
+        "status": "IN_PROGRESS" if kind == "LEHR" else None,
     }
 
 
-def source_identity(record):
+def source_identity(record, source_namespace):
     content = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    return f"ccw-notion:{digest}", digest
+    return f"{source_namespace}:{digest}", digest
 
 
 def backup_database(database_path, connection):
@@ -83,13 +98,16 @@ def import_csv(csv_path, database_path):
     connection = sqlite3.connect(database_path, timeout=10)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
-    connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    ensure_schema(connection, database_path)
     backup_path = backup_database(database_path, connection)
 
     inserted = 0
     skipped = 0
     blank = 0
     source_name = csv_path.name
+    source_namespace = (
+        "jrwimport" if source_name.lower() == "jrwimport.csv" else "ccw-notion"
+    )
     with csv_path.open("r", encoding="utf-8-sig", newline="") as source:
         for row_number, row in enumerate(csv.DictReader(source), start=2):
             if not any(clean(row.get(column)) for column in MEANINGFUL_COLUMNS):
@@ -97,17 +115,25 @@ def import_csv(csv_path, database_path):
                 continue
 
             record = canonical_record(row)
-            source_key, digest = source_identity(record)
+            if not record["text"]:
+                raise ValueError(f"Missing text on row {row_number}")
+            source_key, digest = source_identity(record, source_namespace)
             if connection.execute(
                 "SELECT 1 FROM service_imports WHERE source_key = ?", (source_key,)
             ).fetchone():
                 skipped += 1
                 continue
 
-            song_id = master_id(connection, "songs", "song_number", record["song"])
-            song_by_id = master_id(connection, "people", "name", record["song_by"])
+            song_id = optional_master_id(
+                connection, "songs", "song_number", record["song"]
+            )
+            song_by_id = optional_master_id(
+                connection, "people", "name", record["song_by"]
+            )
             text_id = master_id(connection, "texts", "title", record["text"])
-            text_by_id = master_id(connection, "people", "name", record["text_by"])
+            text_by_id = optional_master_id(
+                connection, "people", "name", record["text_by"]
+            )
             vorrade_id = None
             vorrade_by_id = None
             if record["type"] == "LEHR" and record["vorrade"]:
@@ -121,9 +147,9 @@ def import_csv(csv_path, database_path):
 
             existing = connection.execute(
                 """SELECT id FROM services
-                    WHERE service_date = ? AND service_type = ? AND song_id = ?
-                      AND song_by_person_id = ? AND text_id = ?
-                      AND text_by_person_id = ? AND vorrade_id IS ?
+                    WHERE service_date = ? AND service_type = ? AND song_id IS ?
+                      AND song_by_person_id IS ? AND text_id = ?
+                      AND text_by_person_id IS ? AND vorrade_id IS ?
                       AND vorrade_by_person_id IS ? AND COALESCE(notes, '') = ?
                     LIMIT 1""",
                 (
@@ -143,7 +169,7 @@ def import_csv(csv_path, database_path):
                     (
                         service_id, record["date"], record["type"], song_id,
                         song_by_id, text_id, text_by_id, vorrade_id, vorrade_by_id,
-                        "IN_PROGRESS" if record["type"] == "LEHR" else None,
+                        record["status"],
                         record["notes"] or None, stamp, stamp,
                     ),
                 )

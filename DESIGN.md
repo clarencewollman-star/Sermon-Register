@@ -79,22 +79,22 @@ The following is the logical schema. Exact migration syntax may use SQLite `CHEC
 | `id` | text | primary key |
 | `service_date` | text | required ISO date |
 | `service_type` | text | required; `LEHR` or `GEBET` |
-| `song_id` | text | required FK to `songs` |
-| `song_by_person_id` | text | required FK to `people` |
+| `song_id` | text | nullable FK to `songs` |
+| `song_by_person_id` | text | nullable FK to `people` |
 | `text_id` | text | required FK to `texts` |
-| `text_by_person_id` | text | required FK to `people` |
+| `text_by_person_id` | text | nullable FK to `people` |
 | `vorrade_id` | text | nullable FK to `vorraden`; Lehr only |
 | `vorrade_by_person_id` | text | nullable FK to `people`; Lehr only |
-| `lehr_status` | text | Lehr: `IN_PROGRESS` or `FINISHED`; Gebet: null |
+| `lehr_status` | text | nullable; Lehr may be `IN_PROGRESS` or `FINISHED`; Gebet: null |
 | `notes` | text | nullable |
 | `created_at` | text | required UTC timestamp |
 | `updated_at` | text | required UTC timestamp |
 
 Rules:
 
-- Exactly one Text, Song, Song By person, and Text By person are required for every service.
+- Exactly one Text is required for every service. Song, Song By, and Text By may remain blank for incomplete historical records.
 - Gebet rows must have null `vorrade_id`, `vorrade_by_person_id`, and `lehr_status`.
-- Lehr rows must have `lehr_status`; Vorrade and Vorrade By remain optional unless the open decision below makes them required.
+- Lehr status, Vorrade, and Vorrade By are optional.
 - When `vorrade_id` is null, `vorrade_by_person_id` must also be null.
 - A service date need not be unique; the schema permits more than one service on a date.
 
@@ -345,13 +345,12 @@ These are intentionally unresolved; none requires redesigning the core schema un
 1. **Authentication and users:** single owner account or multiple named users? This determines local user administration and whether future per-user audit/permissions are needed.
 2. **Remote access:** private LAN only, a private VPN, or an internet-facing domain? This determines reverse-proxy and hardening details.
 3. **Lehr continuation semantics:** confirmed assumption for this design: every linked Gebet participates in continuing one Lehr, and the Lehr is separately marked finished. Confirm whether the final Gebet must be explicitly identified; if yes, add `completes_lehr` to the link with at most one true link per Lehr.
-4. **Required participants:** are Song By and Text By always known at entry time? They are modeled as required; make them nullable if incomplete historical entries must be saved.
-5. **Vorrade rules:** can a Lehr omit a Vorrade, and when a Vorrade exists must Vorrade By exist? Both are currently optional as a pair.
-6. **Text PDFs:** current scope attaches PDFs to service occurrences and Vorraden, not reusable Text records. Confirm whether reusable Texts also need their own PDFs; if so, add an explicit `text_attachments` table.
-7. **Song identity:** song number is assumed unique in a single songbook. If multiple hymnals/songbooks are used, add a `hymnals` table before enforcing uniqueness.
-8. **Existing data import:** source format, volume, duplicate rules, and attachment naming are unknown.
-9. **Deletion policy:** recommended default is deactivate master records and restrict deletion of referenced data. Confirm whether an administrator needs permanent deletion and an audit trail.
-10. **Server platform:** operating system, container preference, domain, TLS method, and backup destination remain deployment choices.
+4. **Vorrade rules:** can a Lehr omit a Vorrade, and when a Vorrade exists must Vorrade By exist? Both are currently optional as a pair.
+5. **Text PDFs:** current scope attaches PDFs to service occurrences and Vorraden, not reusable Text records. Confirm whether reusable Texts also need their own PDFs; if so, add an explicit `text_attachments` table.
+6. **Song identity:** song number is assumed unique in a single songbook. If multiple hymnals/songbooks are used, add a `hymnals` table before enforcing uniqueness.
+7. **Attachment import:** PDF source naming and matching rules remain unknown.
+8. **Deletion policy:** recommended default is deactivate master records and restrict deletion of referenced data. Confirm whether an administrator needs permanent deletion and an audit trail.
+9. **Server platform:** operating system, domain, TLS method, and backup destination remain deployment choices.
 
 ## Explicitly out of scope for the first release
 

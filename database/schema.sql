@@ -48,10 +48,10 @@ CREATE TABLE IF NOT EXISTS services (
     service_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
   ),
   service_type TEXT NOT NULL CHECK (service_type IN ('LEHR', 'GEBET')),
-  song_id TEXT NOT NULL REFERENCES songs(id) ON DELETE RESTRICT,
-  song_by_person_id TEXT NOT NULL REFERENCES people(id) ON DELETE RESTRICT,
+  song_id TEXT REFERENCES songs(id) ON DELETE RESTRICT,
+  song_by_person_id TEXT REFERENCES people(id) ON DELETE RESTRICT,
   text_id TEXT NOT NULL REFERENCES texts(id) ON DELETE RESTRICT,
-  text_by_person_id TEXT NOT NULL REFERENCES people(id) ON DELETE RESTRICT,
+  text_by_person_id TEXT REFERENCES people(id) ON DELETE RESTRICT,
   vorrade_id TEXT REFERENCES vorraden(id) ON DELETE RESTRICT,
   vorrade_by_person_id TEXT REFERENCES people(id) ON DELETE RESTRICT,
   lehr_status TEXT CHECK (lehr_status IN ('IN_PROGRESS', 'FINISHED')),
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS services (
     (service_type = 'GEBET' AND vorrade_id IS NULL AND
       vorrade_by_person_id IS NULL AND lehr_status IS NULL)
     OR
-    (service_type = 'LEHR' AND lehr_status IS NOT NULL AND
+    (service_type = 'LEHR' AND
       ((vorrade_id IS NULL AND vorrade_by_person_id IS NULL) OR
        (vorrade_id IS NOT NULL)))
   )
@@ -152,4 +152,4 @@ CREATE INDEX IF NOT EXISTS service_attachments_owner_idx ON service_attachments(
 CREATE INDEX IF NOT EXISTS vorrade_attachments_owner_idx ON vorrade_attachments(vorrade_id);
 CREATE INDEX IF NOT EXISTS service_imports_service_idx ON service_imports(service_id);
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;

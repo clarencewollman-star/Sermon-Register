@@ -24,10 +24,10 @@ type ApiService = {
   id: string;
   service_date: string;
   service_type: "LEHR" | "GEBET";
-  song: string;
-  song_by: string;
+  song: string | null;
+  song_by: string | null;
   text_title: string;
-  text_by: string;
+  text_by: string | null;
   vorrade: string | null;
   vorrade_by: string | null;
   lehr_status: "IN_PROGRESS" | "FINISHED" | null;
@@ -70,18 +70,18 @@ const fromApi = (row: ApiService): Service => {
     }),
     day: date.toLocaleDateString("en-US", { weekday: "long" }),
     type: row.service_type === "LEHR" ? "Lehr" : "Gebet",
-    song: row.song,
-    songBy: row.song_by,
+    song: row.song || "",
+    songBy: row.song_by || "",
     text: row.text_title,
-    textBy: row.text_by,
-    vorrade: row.vorrade || "—",
-    vorradeBy: row.vorrade_by || "—",
+    textBy: row.text_by || "",
+    vorrade: row.vorrade || "",
+    vorradeBy: row.vorrade_by || "",
     status:
       row.lehr_status === "IN_PROGRESS"
         ? "In Progress"
         : row.lehr_status === "FINISHED"
           ? "Finished"
-          : "—",
+          : "",
     notes: row.notes || "",
   };
 };
@@ -182,7 +182,7 @@ export default function Home() {
           textBy: String(form.get("editTextBy")),
           vorrade: String(form.get("editVorrade") || ""),
           vorradeBy: String(form.get("editVorradeBy") || ""),
-          status: String(form.get("editStatus") || "IN_PROGRESS"),
+          status: String(form.get("editStatus") || ""),
           notes: String(form.get("editNotes") || ""),
         }),
       });
@@ -276,10 +276,8 @@ export default function Home() {
     const vorrade = String(form.get("inlineVorrade") || "").trim();
     const vorradeBy = String(form.get("inlineVorradeBy") || "").trim();
     const notes = String(form.get("inlineNotes") || "");
-    if (!date || !type || !song || !songBy || !text || !textBy) {
-      setSaveError(
-        "Complete Date, Type, Song, Song By, Text, And Text By.",
-      );
+    if (!date || !type || !text) {
+      setSaveError("Complete Date, Type, And Text.");
       return;
     }
     try {
@@ -676,9 +674,11 @@ export default function Home() {
                           <td className="person-column">{service.vorradeBy}</td>
                           <td className="note-cell">{service.notes}</td>
                           <td>
-                            <span className="badge text-bg-secondary">
-                              {service.status}
-                            </span>
+                            {service.status && (
+                              <span className="badge text-bg-secondary">
+                                {service.status}
+                              </span>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -705,17 +705,23 @@ export default function Home() {
                         </span>
                       </span>
                       <span className="d-block fw-semibold mt-3">{service.text}</span>
-                      <small className="d-block text-body-secondary mt-1">
-                        {service.song} · {service.textBy}
-                      </small>
-                      {service.type === "Lehr" && service.vorrade !== "—" && (
+                      {(service.song || service.textBy) && (
                         <small className="d-block text-body-secondary mt-1">
-                          {service.vorrade} · {service.vorradeBy}
+                          {[service.song, service.textBy].filter(Boolean).join(" · ")}
                         </small>
                       )}
-                      <span className="badge text-bg-secondary mt-2">
-                        {service.status}
-                      </span>
+                      {service.type === "Lehr" && service.vorrade && (
+                        <small className="d-block text-body-secondary mt-1">
+                          {[service.vorrade, service.vorradeBy]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </small>
+                      )}
+                      {service.status && (
+                        <span className="badge text-bg-secondary mt-2">
+                          {service.status}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -834,7 +840,6 @@ export default function Home() {
                         name="song"
                         list="songs-list"
                         placeholder="Type A New Song"
-                        required
                       />
                     </div>
                     <div className="col-md-6">
@@ -847,7 +852,6 @@ export default function Home() {
                         name="songBy"
                         list="people-list"
                         placeholder="Type A New Person"
-                        required
                       />
                     </div>
                     <div className="col-12">
@@ -873,7 +877,6 @@ export default function Home() {
                         name="textBy"
                         list="people-list"
                         placeholder="Type A New Person"
-                        required
                       />
                     </div>
                     {kind === "Lehr" && (
@@ -1013,7 +1016,6 @@ export default function Home() {
                         name="editSong"
                         list="songs-list"
                         defaultValue={selected.song}
-                        required
                       />
                     </div>
                     <div className="col-md-6">
@@ -1026,7 +1028,6 @@ export default function Home() {
                         name="editSongBy"
                         list="people-list"
                         defaultValue={selected.songBy}
-                        required
                       />
                     </div>
                     <div className="col-12">
@@ -1052,7 +1053,6 @@ export default function Home() {
                         name="editTextBy"
                         list="people-list"
                         defaultValue={selected.textBy}
-                        required
                       />
                     </div>
                     {editKind === "Lehr" && (
@@ -1080,9 +1080,12 @@ export default function Home() {
                             defaultValue={
                               selected.status === "Finished"
                                 ? "FINISHED"
-                                : "IN_PROGRESS"
+                                : selected.status === "In Progress"
+                                  ? "IN_PROGRESS"
+                                  : ""
                             }
                           >
+                            <option value="">No Status</option>
                             <option value="IN_PROGRESS">In Progress</option>
                             <option value="FINISHED">Finished</option>
                           </select>
