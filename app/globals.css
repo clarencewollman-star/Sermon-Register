@@ -143,6 +143,54 @@ button.nav-link {
   vertical-align: middle;
 }
 
+.songs-table {
+  min-width: 760px;
+  table-layout: fixed;
+}
+
+.songs-table th:nth-child(1) {
+  width: 28%;
+}
+
+.songs-table th:nth-child(2) {
+  width: 23%;
+}
+
+.songs-table th:nth-child(3) {
+  width: 11%;
+}
+
+.songs-table th:nth-child(4) {
+  width: 16%;
+}
+
+.songs-table th:nth-child(5) {
+  width: 22%;
+}
+
+.sort-header-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  background: transparent;
+}
+
+.sort-header-button:hover,
+.sort-header-button:focus-visible {
+  color: var(--bs-primary);
+}
+
+.sort-header-button .bi {
+  font-size: 0.65rem;
+}
+
 .inline-entry-row td {
   padding: 0.5rem 0.35rem;
   background: var(--bs-primary-bg-subtle);
@@ -201,6 +249,7 @@ button.nav-link {
 }
 
 .mobile-service-list,
+.mobile-song-list,
 .mobile-tabbar {
   display: none;
 }
@@ -326,7 +375,12 @@ button.nav-link {
     display: none;
   }
 
-  .mobile-service-list {
+  .desktop-songs-table {
+    display: none;
+  }
+
+  .mobile-service-list,
+  .mobile-song-list {
     display: flex;
   }
 

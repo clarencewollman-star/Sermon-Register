@@ -125,7 +125,7 @@ def import_csv(csv_path, database_path):
                 continue
 
             song_id = optional_master_id(
-                connection, "songs", "song_number", record["song"]
+                connection, "songs", "title", record["song"]
             )
             song_by_id = optional_master_id(
                 connection, "people", "name", record["song_by"]

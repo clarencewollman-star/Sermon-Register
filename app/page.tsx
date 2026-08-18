@@ -43,7 +43,27 @@ type ApiService = {
   notes: string | null;
 };
 
+type Song = {
+  id: string;
+  title: string;
+  tags: string;
+  notes: string;
+  timesUsed: number;
+  lastUsedValue: string;
+  lastUsed: string;
+};
+
+type ApiSong = {
+  id: string;
+  title: string;
+  tags: string | null;
+  notes: string | null;
+  times_used: number;
+  last_used: string | null;
+};
+
 type EntryType = "" | "Lehr" | "Gebet";
+type SongSortField = "title" | "tags" | "timesUsed";
 
 const navItems = [
   { label: "Register", icon: "bi-table" },
@@ -67,6 +87,7 @@ const blankDraft = () => ({
 });
 
 const apiUrl = () => "/api/services";
+const songsApiUrl = () => "/api/songs";
 
 const fromApi = (row: ApiService): Service => {
   const date = new Date(`${row.service_date}T12:00:00`);
@@ -107,11 +128,28 @@ const fromApi = (row: ApiService): Service => {
   };
 };
 
+const songFromApi = (row: ApiSong): Song => ({
+  id: row.id,
+  title: row.title,
+  tags: row.tags || "",
+  notes: row.notes || "",
+  timesUsed: Number(row.times_used || 0),
+  lastUsedValue: row.last_used || "",
+  lastUsed: row.last_used
+    ? new Date(`${row.last_used}T12:00:00`).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+    : "Never",
+});
+
 export default function Home() {
   const [active, setActive] = useState("Register");
   const [items, setItems] = useState<Service[]>([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All Services");
+  const [year, setYear] = useState("All Years");
   const [open, setOpen] = useState(false);
   const [mobile, setMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -121,6 +159,12 @@ export default function Home() {
   const [rowVersion, setRowVersion] = useState(0);
   const [saveError, setSaveError] = useState("");
   const [draft, setDraft] = useState(blankDraft);
+  const [songs, setSongs] = useState<Song[]>([]);
+  const [songQuery, setSongQuery] = useState("");
+  const [songSort, setSongSort] = useState<SongSortField>("title");
+  const [songSortDirection, setSongSortDirection] = useState<"asc" | "desc">("asc");
+  const [songEditor, setSongEditor] = useState<Song | "new" | null>(null);
+  const [songError, setSongError] = useState("");
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
@@ -128,6 +172,16 @@ export default function Home() {
     update();
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    fetch(songsApiUrl())
+      .then((response) => {
+        if (!response.ok) throw new Error("Songs unavailable");
+        return response.json();
+      })
+      .then((rows) => setSongs((rows as ApiSong[]).map(songFromApi)))
+      .catch(() => setSongError("The Songs Could Not Be Loaded."));
   }, []);
 
   useEffect(() => {
@@ -164,13 +218,63 @@ export default function Home() {
       items.filter(
         (service) =>
           (filter === "All Services" || service.type === filter) &&
+          (year === "All Years" || service.dateValue.startsWith(`${year}-`)) &&
           Object.values(service)
             .join(" ")
             .toLowerCase()
             .includes(query.toLowerCase()),
       ),
-    [items, query, filter],
+    [items, query, filter, year],
   );
+
+  const years = useMemo(
+    () =>
+      Array.from(new Set(items.map((service) => service.dateValue.slice(0, 4))))
+        .filter(Boolean)
+        .sort((left, right) => right.localeCompare(left)),
+    [items],
+  );
+
+  const visibleSongs = useMemo(
+    () => {
+      const filteredSongs = songs.filter((song) =>
+        `${song.title} ${song.tags} ${song.notes}`
+          .toLowerCase()
+          .includes(songQuery.toLowerCase()),
+      );
+      return filteredSongs.sort((left, right) => {
+        if (songSort === "tags" && (!left.tags || !right.tags)) {
+          if (!left.tags && !right.tags) return 0;
+          return !left.tags ? 1 : -1;
+        }
+        const comparison =
+          songSort === "timesUsed"
+            ? left.timesUsed - right.timesUsed
+            : left[songSort].localeCompare(right[songSort], undefined, {
+                numeric: true,
+                sensitivity: "base",
+              });
+        return songSortDirection === "asc" ? comparison : -comparison;
+      });
+    },
+    [songs, songQuery, songSort, songSortDirection],
+  );
+
+  function changeSongSort(field: SongSortField) {
+    if (songSort === field) {
+      setSongSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSongSort(field);
+    setSongSortDirection(field === "timesUsed" ? "desc" : "asc");
+  }
+
+  async function refreshSongs() {
+    const response = await fetch(songsApiUrl(), { cache: "no-store" });
+    if (!response.ok) throw new Error("Could Not Refresh Songs");
+    const rows = (await response.json()) as ApiSong[];
+    setSongs(rows.map(songFromApi));
+  }
 
   async function createService(payload: Record<string, string>) {
     setSaveError("");
@@ -190,6 +294,7 @@ export default function Home() {
           : service,
       ),
     ]);
+    void refreshSongs().catch(() => setSongError("The Songs Could Not Be Refreshed."));
   }
 
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
@@ -229,6 +334,7 @@ export default function Home() {
         }),
       );
       setSelected(null);
+      void refreshSongs().catch(() => setSongError("The Songs Could Not Be Refreshed."));
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could Not Update Service");
     }
@@ -250,8 +356,46 @@ export default function Home() {
         current.filter((service) => service.id !== selected.id),
       );
       setSelected(null);
+      void refreshSongs().catch(() => setSongError("The Songs Could Not Be Refreshed."));
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could Not Delete Service");
+    }
+  }
+
+  async function saveSong(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!songEditor) return;
+    const form = new FormData(event.currentTarget);
+    const title = String(form.get("songTitle") || "").trim();
+    if (!title) {
+      setSongError("Song Title Is Required.");
+      return;
+    }
+    setSongError("");
+    try {
+      const response = await fetch(songsApiUrl(), {
+        method: songEditor === "new" ? "POST" : "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: songEditor === "new" ? "" : songEditor.id,
+          title,
+          tags: String(form.get("songTags") || ""),
+          notes: String(form.get("songNotes") || ""),
+        }),
+      });
+      const result = (await response.json()) as ApiSong & { error?: string };
+      if (!response.ok) throw new Error(result.error || "Could Not Save Song");
+      const saved = songFromApi(result);
+      setSongs((current) => {
+        const next =
+          songEditor === "new"
+            ? [...current, saved]
+            : current.map((song) => (song.id === saved.id ? saved : song));
+        return next.sort((left, right) => left.title.localeCompare(right.title));
+      });
+      setSongEditor(null);
+    } catch (error) {
+      setSongError(error instanceof Error ? error.message : "Could Not Save Song");
     }
   }
 
@@ -400,11 +544,6 @@ export default function Home() {
             >
               v{__APP_VERSION__}
             </span>
-            <button className="btn btn-primary" type="button" onClick={startNew}>
-              <i className="bi bi-plus-lg me-1" />
-              <span className="d-none d-sm-inline">New Service</span>
-              <span className="d-sm-none">New</span>
-            </button>
           </div>
         </div>
       </header>
@@ -509,15 +648,32 @@ export default function Home() {
                       </select>
                     </div>
                     <div className="col-6 col-lg-auto">
-                      <select className="form-select" aria-label="Year">
-                        <option>2026</option>
-                        <option>2025</option>
+                      <select
+                        className="form-select"
+                        value={year}
+                        onChange={(event) => setYear(event.target.value)}
+                        aria-label="Year"
+                      >
+                        <option>All Years</option>
+                        {years.map((availableYear) => (
+                          <option key={availableYear}>{availableYear}</option>
+                        ))}
                       </select>
                     </div>
                     <div className="col-auto ms-lg-auto">
                       <span className="badge text-bg-primary rounded-pill">
-                        {items.length} Services
+                        {visible.length} Services
                       </span>
+                    </div>
+                    <div className="col-12 d-md-none">
+                      <button
+                        className="btn btn-primary w-100"
+                        type="button"
+                        onClick={startNew}
+                      >
+                        <i className="bi bi-plus-lg me-1" />
+                        Add Service
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -790,6 +946,262 @@ export default function Home() {
                   <div className="card-body text-center text-body-secondary py-5">
                     <i className="bi bi-inbox fs-2 d-block mb-2" />
                     No Services Match Your Search.
+                  </div>
+                )}
+              </div>
+            ) : active === "Songs" ? (
+              <div className="card card-primary card-outline shadow-sm songs-card">
+                <div className="card-header border-bottom">
+                  <div className="row g-2 align-items-center">
+                    <div className="col-12 col-md">
+                      <div className="input-group">
+                        <span className="input-group-text">
+                          <i className="bi bi-search" />
+                        </span>
+                        <input
+                          className="form-control"
+                          value={songQuery}
+                          onChange={(event) => setSongQuery(event.target.value)}
+                          placeholder="Search Titles, Tags, Or Notes"
+                          aria-label="Search Songs"
+                        />
+                      </div>
+                    </div>
+                    <div className="col-8 d-md-none">
+                      <select
+                        className="form-select"
+                        value={songSort}
+                        onChange={(event) => {
+                          const field = event.target.value as SongSortField;
+                          setSongSort(field);
+                          setSongSortDirection(field === "timesUsed" ? "desc" : "asc");
+                        }}
+                        aria-label="Sort Songs By"
+                      >
+                        <option value="title">Sort By Title</option>
+                        <option value="tags">Sort By Tags</option>
+                        <option value="timesUsed">Sort By Times Used</option>
+                      </select>
+                    </div>
+                    <div className="col-4 d-md-none">
+                      <button
+                        className="btn btn-outline-secondary w-100"
+                        type="button"
+                        onClick={() =>
+                          setSongSortDirection((current) =>
+                            current === "asc" ? "desc" : "asc",
+                          )
+                        }
+                        aria-label={
+                          songSortDirection === "asc"
+                            ? "Sort Descending"
+                            : "Sort Ascending"
+                        }
+                      >
+                        <i
+                          className={`bi ${
+                            songSortDirection === "asc"
+                              ? "bi-sort-up"
+                              : "bi-sort-down"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                    <div className="col-auto">
+                      <span className="badge text-bg-primary rounded-pill">
+                        {visibleSongs.length} Songs
+                      </span>
+                    </div>
+                    <div className="col-auto">
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        onClick={() => {
+                          setSongError("");
+                          setSongEditor("new");
+                        }}
+                      >
+                        <i className="bi bi-plus-lg me-1" />
+                        Add Song
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {songError && (
+                  <div className="alert alert-danger m-3 mb-0" role="alert">
+                    <i className="bi bi-exclamation-triangle-fill me-2" />
+                    {songError}
+                  </div>
+                )}
+
+                <div className="table-responsive desktop-songs-table">
+                  <table className="table table-hover align-middle mb-0 songs-table">
+                    <thead className="table-light">
+                      <tr>
+                        <th
+                          aria-sort={
+                            songSort === "title"
+                              ? songSortDirection === "asc"
+                                ? "ascending"
+                                : "descending"
+                              : "none"
+                          }
+                        >
+                          <button
+                            className="sort-header-button"
+                            type="button"
+                            onClick={() => changeSongSort("title")}
+                          >
+                            Title
+                            {songSort === "title" && (
+                              <i
+                                className={`bi ${
+                                  songSortDirection === "asc"
+                                    ? "bi-caret-up-fill"
+                                    : "bi-caret-down-fill"
+                                }`}
+                              />
+                            )}
+                          </button>
+                        </th>
+                        <th
+                          aria-sort={
+                            songSort === "tags"
+                              ? songSortDirection === "asc"
+                                ? "ascending"
+                                : "descending"
+                              : "none"
+                          }
+                        >
+                          <button
+                            className="sort-header-button"
+                            type="button"
+                            onClick={() => changeSongSort("tags")}
+                          >
+                            Tags
+                            {songSort === "tags" && (
+                              <i
+                                className={`bi ${
+                                  songSortDirection === "asc"
+                                    ? "bi-caret-up-fill"
+                                    : "bi-caret-down-fill"
+                                }`}
+                              />
+                            )}
+                          </button>
+                        </th>
+                        <th
+                          className="text-center"
+                          aria-sort={
+                            songSort === "timesUsed"
+                              ? songSortDirection === "asc"
+                                ? "ascending"
+                                : "descending"
+                              : "none"
+                          }
+                        >
+                          <button
+                            className="sort-header-button justify-content-center"
+                            type="button"
+                            onClick={() => changeSongSort("timesUsed")}
+                          >
+                            Times Used
+                            {songSort === "timesUsed" && (
+                              <i
+                                className={`bi ${
+                                  songSortDirection === "asc"
+                                    ? "bi-caret-up-fill"
+                                    : "bi-caret-down-fill"
+                                }`}
+                              />
+                            )}
+                          </button>
+                        </th>
+                        <th>Last Used</th>
+                        <th>Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleSongs.map((song) => (
+                        <tr
+                          className="service-row"
+                          key={song.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => {
+                            setSongError("");
+                            setSongEditor(song);
+                          }}
+                          onKeyDown={(event) =>
+                            (event.key === "Enter" || event.key === " ") &&
+                            setSongEditor(song)
+                          }
+                        >
+                          <td className="fw-semibold">{song.title}</td>
+                          <td>
+                            <span className="d-flex flex-wrap gap-1">
+                              {song.tags
+                                .split(",")
+                                .map((tag) => tag.trim())
+                                .filter(Boolean)
+                                .map((tag) => (
+                                  <span className="badge text-bg-light border" key={tag}>
+                                    {tag}
+                                  </span>
+                                ))}
+                            </span>
+                          </td>
+                          <td className="text-center">{song.timesUsed}</td>
+                          <td>{song.lastUsed}</td>
+                          <td className="note-cell">{song.notes}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="list-group list-group-flush mobile-song-list">
+                  {visibleSongs.map((song) => (
+                    <button
+                      type="button"
+                      className="list-group-item list-group-item-action p-3 text-start"
+                      key={song.id}
+                      onClick={() => {
+                        setSongError("");
+                        setSongEditor(song);
+                      }}
+                    >
+                      <strong className="d-block">{song.title}</strong>
+                      {song.tags && (
+                        <span className="d-flex flex-wrap gap-1 mt-2">
+                          {song.tags
+                            .split(",")
+                            .map((tag) => tag.trim())
+                            .filter(Boolean)
+                            .map((tag) => (
+                              <span className="badge text-bg-light border" key={tag}>
+                                {tag}
+                              </span>
+                            ))}
+                        </span>
+                      )}
+                      <small className="d-block text-body-secondary mt-2">
+                        {song.timesUsed} Times Used · Last Used {song.lastUsed}
+                      </small>
+                      {song.notes && (
+                        <span className="d-block text-body-secondary mt-2">
+                          {song.notes}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+
+                {!visibleSongs.length && (
+                  <div className="card-body text-center text-body-secondary py-5">
+                    <i className="bi bi-music-note-list fs-2 d-block mb-2" />
+                    No Songs Match Your Search.
                   </div>
                 )}
               </div>
@@ -1319,7 +1731,126 @@ export default function Home() {
         </div>
       )}
 
-      <datalist id="songs-list" />
+      {songEditor && (
+        <div
+          className="modal fade show d-block service-edit-modal"
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="song-editor-title"
+        >
+          <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div className="modal-content card card-primary card-outline mb-0">
+              <div className="modal-header">
+                <div>
+                  <small className="text-uppercase text-body-secondary">
+                    Reusable Song Record
+                  </small>
+                  <h5 className="modal-title" id="song-editor-title">
+                    {songEditor === "new" ? "Add Song" : "Edit Song"}
+                  </h5>
+                </div>
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Close Song Editor"
+                  onClick={() => setSongEditor(null)}
+                />
+              </div>
+              <form key={songEditor === "new" ? "new" : songEditor.id} onSubmit={saveSong}>
+                <div className="modal-body">
+                  {songError && (
+                    <div className="alert alert-danger" role="alert">
+                      <i className="bi bi-exclamation-triangle-fill me-2" />
+                      {songError}
+                    </div>
+                  )}
+                  <div className="row g-3">
+                    <div className="col-12">
+                      <label className="form-label" htmlFor="song-title">
+                        Title
+                      </label>
+                      <input
+                        className="form-control"
+                        id="song-title"
+                        name="songTitle"
+                        defaultValue={songEditor === "new" ? "" : songEditor.title}
+                        placeholder="Include The Song Number In The Title"
+                        required
+                      />
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label" htmlFor="song-tags">
+                        Tags
+                      </label>
+                      <input
+                        className="form-control"
+                        id="song-tags"
+                        name="songTags"
+                        defaultValue={songEditor === "new" ? "" : songEditor.tags}
+                        placeholder="Christmas, Faith, Easter"
+                      />
+                      <div className="form-text">
+                        Separate Multiple Tags With Commas.
+                      </div>
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label" htmlFor="song-notes">
+                        Notes
+                      </label>
+                      <textarea
+                        className="form-control"
+                        id="song-notes"
+                        name="songNotes"
+                        rows={4}
+                        defaultValue={songEditor === "new" ? "" : songEditor.notes}
+                        placeholder="Notes About This Song"
+                      />
+                    </div>
+                    {songEditor !== "new" && (
+                      <div className="col-12">
+                        <div className="card bg-body-tertiary border-0 mb-0">
+                          <div className="card-body d-flex flex-wrap gap-4 py-3">
+                            <span>
+                              <strong>{songEditor.timesUsed}</strong>
+                              <span className="text-body-secondary ms-2">Times Used</span>
+                            </span>
+                            <span>
+                              <strong>{songEditor.lastUsed}</strong>
+                              <span className="text-body-secondary ms-2">Last Used</span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary"
+                    onClick={() => setSongEditor(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button className="btn btn-primary" type="submit">
+                    <i className="bi bi-check-lg me-1" />
+                    Save Song
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <datalist id="songs-list">
+        {songs.map((song) => (
+          <option key={song.id} value={song.title}>
+            {song.tags}
+          </option>
+        ))}
+      </datalist>
       <datalist id="people-list" />
       <datalist id="texts-list" />
       <datalist id="vorraden-list" />

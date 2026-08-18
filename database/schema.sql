@@ -4,10 +4,9 @@ PRAGMA busy_timeout = 5000;
 
 CREATE TABLE IF NOT EXISTS songs (
   id TEXT PRIMARY KEY,
-  song_number TEXT NOT NULL COLLATE NOCASE UNIQUE,
-  title TEXT,
+  title TEXT NOT NULL COLLATE NOCASE,
+  tags TEXT,
   notes TEXT,
-  active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -153,4 +152,4 @@ CREATE INDEX IF NOT EXISTS service_attachments_owner_idx ON service_attachments(
 CREATE INDEX IF NOT EXISTS vorrade_attachments_owner_idx ON vorrade_attachments(vorrade_id);
 CREATE INDEX IF NOT EXISTS service_imports_service_idx ON service_imports(service_id);
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;

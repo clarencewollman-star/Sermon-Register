@@ -46,6 +46,17 @@ CREATE TABLE services_v2 (
 )
 """
 
+SONGS_V2_SQL = """
+CREATE TABLE songs_v2 (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL COLLATE NOCASE,
+  tags TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)
+"""
+
 
 def now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -127,6 +138,38 @@ def ensure_schema(connection, database_path=DB_PATH):
         connection.execute("PRAGMA user_version = 3")
         connection.commit()
 
+    song_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(songs)")
+    }
+    if "song_number" in song_columns or "tags" not in song_columns:
+        if not backup_path:
+            backup_path = schema_backup(database_path, connection)
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(SONGS_V2_SQL)
+            connection.execute(
+                """INSERT INTO songs_v2
+                   (id, title, tags, notes, created_at, updated_at)
+                   SELECT id,
+                          COALESCE(NULLIF(TRIM(title), ''), song_number),
+                          NULL,
+                          notes,
+                          created_at,
+                          updated_at
+                     FROM songs"""
+            )
+            connection.execute("DROP TABLE songs")
+            connection.execute("ALTER TABLE songs_v2 RENAME TO songs")
+            connection.execute("PRAGMA user_version = 4")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+
     connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     violations = connection.execute("PRAGMA foreign_key_check").fetchall()
     if violations:
@@ -167,6 +210,31 @@ def master_id(con, table, value_column, value, extra=None):
 def optional_master_id(con, table, value_column, value, extra=None):
     value = str(value or "").strip()
     return master_id(con, table, value_column, value, extra) if value else None
+
+
+def normalize_tags(value):
+    tags = []
+    seen = set()
+    for raw_tag in str(value or "").split(","):
+        tag = raw_tag.strip()
+        key = tag.casefold()
+        if tag and key not in seen:
+            tags.append(tag)
+            seen.add(key)
+    return ", ".join(tags) or None
+
+
+def song_rows(con):
+    sql = """
+    SELECT songs.id, songs.title, songs.tags, songs.notes,
+           COUNT(services.id) AS times_used,
+           MAX(services.service_date) AS last_used
+      FROM songs
+ LEFT JOIN services ON services.song_id = songs.id
+  GROUP BY songs.id, songs.title, songs.tags, songs.notes
+  ORDER BY songs.title COLLATE NOCASE
+    """
+    return [dict(row) for row in con.execute(sql)]
 
 
 def matching_lehr_id(con, gebet_date, text_id, gebet_id=None):
@@ -302,7 +370,7 @@ def set_gebet_lehr_link(con, gebet_id, lehr_id, lehr_status, stamp):
 def service_rows(con):
     sql = """
     SELECT s.id, s.service_date, s.service_type, s.notes, s.lehr_status,
-           COALESCE(songs.song_number, '') AS song,
+           COALESCE(songs.title, '') AS song,
            COALESCE(song_person.name, '') AS song_by,
            texts.title AS text_title,
            COALESCE(text_person.name, '') AS text_by,
@@ -356,13 +424,93 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_json_headers(204)
 
+    def body(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        return json.loads(self.rfile.read(length) or b"{}")
+
+    def create_song(self):
+        try:
+            body = self.body()
+            title = str(body.get("title", "")).strip()
+            if not title:
+                return self.json({"error": "Song Title is required"}, 400)
+            with connect() as con:
+                existing = con.execute(
+                    "SELECT id FROM songs WHERE title = ? COLLATE NOCASE", (title,)
+                ).fetchone()
+                if existing:
+                    return self.json({"error": "This Song already exists"}, 409)
+                song_id = str(uuid.uuid4())
+                stamp = now()
+                con.execute(
+                    """INSERT INTO songs
+                       (id, title, tags, notes, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        song_id,
+                        title,
+                        normalize_tags(body.get("tags")),
+                        str(body.get("notes", "")).strip() or None,
+                        stamp,
+                        stamp,
+                    ),
+                )
+                con.commit()
+                record = next(row for row in song_rows(con) if row["id"] == song_id)
+                self.json(record, 201)
+        except Exception as exc:
+            self.json({"error": str(exc)}, 500)
+
+    def update_song(self):
+        try:
+            body = self.body()
+            song_id = str(body.get("id", "")).strip()
+            title = str(body.get("title", "")).strip()
+            if not song_id or not title:
+                return self.json({"error": "Song and Title are required"}, 400)
+            with connect() as con:
+                existing = con.execute(
+                    "SELECT id FROM songs WHERE id = ?", (song_id,)
+                ).fetchone()
+                if not existing:
+                    return self.json({"error": "Song not found"}, 404)
+                duplicate = con.execute(
+                    """SELECT id FROM songs
+                        WHERE title = ? COLLATE NOCASE AND id <> ?""",
+                    (title, song_id),
+                ).fetchone()
+                if duplicate:
+                    return self.json({"error": "This Song already exists"}, 409)
+                con.execute(
+                    """UPDATE songs
+                          SET title = ?, tags = ?, notes = ?, updated_at = ?
+                        WHERE id = ?""",
+                    (
+                        title,
+                        normalize_tags(body.get("tags")),
+                        str(body.get("notes", "")).strip() or None,
+                        now(),
+                        song_id,
+                    ),
+                )
+                con.commit()
+                record = next(row for row in song_rows(con) if row["id"] == song_id)
+                self.json(record)
+        except Exception as exc:
+            self.json({"error": str(exc)}, 500)
+
     def do_GET(self):
+        if self.path == "/songs":
+            with connect() as con:
+                return self.json(song_rows(con))
         if self.path != "/services":
             return self.json({"error": "Not found"}, 404)
         with connect() as con:
             self.json(service_rows(con))
 
     def do_POST(self):
+        if self.path == "/songs":
+            return self.create_song()
         if self.path != "/services":
             return self.json({"error": "Not found"}, 404)
         try:
@@ -375,9 +523,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"error": "Invalid service type"}, 400)
 
             with connect() as con:
-                song_id = optional_master_id(
-                    con, "songs", "song_number", body.get("song")
-                )
+                song_id = optional_master_id(con, "songs", "title", body.get("song"))
                 song_by = optional_master_id(
                     con, "people", "name", body.get("songBy")
                 )
@@ -436,6 +582,8 @@ class Handler(BaseHTTPRequestHandler):
             self.json({"error": str(exc)}, 500)
 
     def do_PUT(self):
+        if self.path == "/songs":
+            return self.update_song()
         if self.path != "/services":
             return self.json({"error": "Not found"}, 404)
         try:
@@ -454,9 +602,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not existing:
                     return self.json({"error": "Service not found"}, 404)
 
-                song_id = optional_master_id(
-                    con, "songs", "song_number", body.get("song")
-                )
+                song_id = optional_master_id(con, "songs", "title", body.get("song"))
                 song_by = optional_master_id(
                     con, "people", "name", body.get("songBy")
                 )
