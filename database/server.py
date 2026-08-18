@@ -63,13 +63,15 @@ def service_rows(con):
            song_person.name AS song_by,
            texts.title AS text_title,
            text_person.name AS text_by,
-           vorraden.title AS vorrade
+           vorraden.title AS vorrade,
+           vorrade_person.name AS vorrade_by
       FROM services s
       JOIN songs ON songs.id = s.song_id
       JOIN people song_person ON song_person.id = s.song_by_person_id
       JOIN texts ON texts.id = s.text_id
       JOIN people text_person ON text_person.id = s.text_by_person_id
  LEFT JOIN vorraden ON vorraden.id = s.vorrade_id
+ LEFT JOIN people vorrade_person ON vorrade_person.id = s.vorrade_by_person_id
   ORDER BY s.service_date DESC, s.created_at DESC
     """
     return [dict(row) for row in con.execute(sql)]
@@ -127,21 +129,27 @@ class Handler(BaseHTTPRequestHandler):
                 text_id = master_id(con, "texts", "title", body["text"].strip())
                 text_by = master_id(con, "people", "name", body["textBy"].strip())
                 vorrade_id = None
+                vorrade_by = None
                 if body["type"] == "LEHR" and str(body.get("vorrade", "")).strip():
                     vorrade_id = master_id(
                         con, "vorraden", "title", body["vorrade"].strip()
                     )
+                    if str(body.get("vorradeBy", "")).strip():
+                        vorrade_by = master_id(
+                            con, "people", "name", body["vorradeBy"].strip()
+                        )
                 service_id = str(uuid.uuid4())
                 stamp = now()
                 con.execute(
                     """INSERT INTO services
                     (id, service_date, service_type, song_id, song_by_person_id,
-                     text_id, text_by_person_id, vorrade_id, lehr_status, notes,
+                     text_id, text_by_person_id, vorrade_id, vorrade_by_person_id,
+                     lehr_status, notes,
                      created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         service_id, body["date"], body["type"], song_id, song_by,
-                        text_id, text_by, vorrade_id,
+                        text_id, text_by, vorrade_id, vorrade_by,
                         "IN_PROGRESS" if body["type"] == "LEHR" else None,
                         str(body.get("notes", "")).strip() or None, stamp, stamp,
                     ),
@@ -176,12 +184,17 @@ class Handler(BaseHTTPRequestHandler):
                 text_id = master_id(con, "texts", "title", body["text"].strip())
                 text_by = master_id(con, "people", "name", body["textBy"].strip())
                 vorrade_id = None
+                vorrade_by = None
                 lehr_status = None
                 if body["type"] == "LEHR":
                     if str(body.get("vorrade", "")).strip():
                         vorrade_id = master_id(
                             con, "vorraden", "title", body["vorrade"].strip()
                         )
+                        if str(body.get("vorradeBy", "")).strip():
+                            vorrade_by = master_id(
+                                con, "people", "name", body["vorradeBy"].strip()
+                            )
                     lehr_status = body.get("status", "IN_PROGRESS")
                     if lehr_status not in ("IN_PROGRESS", "FINISHED"):
                         return self.json({"error": "Invalid Lehr status"}, 400)
@@ -190,12 +203,12 @@ class Handler(BaseHTTPRequestHandler):
                     """UPDATE services
                        SET service_date = ?, service_type = ?, song_id = ?,
                            song_by_person_id = ?, text_id = ?, text_by_person_id = ?,
-                           vorrade_id = ?, vorrade_by_person_id = NULL,
+                           vorrade_id = ?, vorrade_by_person_id = ?,
                            lehr_status = ?, notes = ?, updated_at = ?
                      WHERE id = ?""",
                     (
                         body["date"], body["type"], song_id, song_by, text_id,
-                        text_by, vorrade_id, lehr_status,
+                        text_by, vorrade_id, vorrade_by, lehr_status,
                         str(body.get("notes", "")).strip() or None,
                         now(), body["id"],
                     ),

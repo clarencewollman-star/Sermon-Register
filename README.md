@@ -2,7 +2,7 @@
 
 A private, self-hosted register for Lehr and Gebet services. The desktop view is a spreadsheet-style register with inline entry; the iPhone view uses a compact list and form. Data is stored in a local SQLite file and does not require a database subscription.
 
-The current application supports creating and listing services, including reusable Songs, Texts, Vorraden, and People created while a service is saved. The complete architecture, finalized schema, staged plan, and remaining decisions are in [DESIGN.md](DESIGN.md).
+The current application supports creating, editing, deleting, and listing services, including reusable Songs, Texts, Vorraden, and People created while a service is saved. The complete architecture, finalized schema, staged plan, and remaining decisions are in [DESIGN.md](DESIGN.md).
 
 ## Run locally
 
@@ -30,7 +30,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Docker Compose always pulls the latest `main` image from `ghcr.io/clarencewollman-star/sermonregister:main`. The current image contains application version `0.2.1`. Open <http://localhost:3810>. The web app securely forwards database requests to SQLite inside the same container. The host directory `/docker/sermonregister/data` is mounted into the container, so database records survive image and container replacement.
+Docker Compose always pulls the latest `main` image from `ghcr.io/clarencewollman-star/sermonregister:main`. The current image contains application version `0.3.0`. Open <http://localhost:3810>. The web app securely forwards database requests to SQLite inside the same container. The host directory `/docker/sermonregister/data` is mounted into the container, so database records survive image and container replacement.
 
 The `main` image is refreshed whenever the GitHub Actions publish job succeeds on the `main` branch. If the GitHub package is private, sign in first with `docker login ghcr.io`.
 
@@ -48,7 +48,17 @@ The repository's package visibility settings determine who can download that ima
 
 ## Application version
 
-The current release is `0.2.1`. It is shown in the application header, stored in the image's OCI version label, and published as the GHCR tag `0.2.1`. `package.json` is the release-version source used by the frontend and GitHub Actions. Portainer follows the rolling `main` image tag from `compose.yaml`.
+The current release is `0.3.0`. It is shown in the application header, stored in the image's OCI version label, and published as the GHCR tag `0.3.0`. `package.json` is the release-version source used by the frontend and GitHub Actions. Portainer follows the rolling `main` image tag from `compose.yaml`.
+
+## Private CSV Import
+
+Import a compatible private CSV without adding it to GitHub:
+
+```bash
+python database/import_csv.py "/path/to/ccw notion.csv"
+```
+
+The importer creates a database backup first, skips blank CSV rows, accepts both supported source date formats, uses `Not recorded` for approved missing required values, and safely skips records it has already imported. Tags are not imported.
 
 ## Interface design
 

@@ -78,8 +78,29 @@ button.nav-link {
 }
 
 .register-table {
-  min-width: 1180px;
+  width: 100%;
+  min-width: 950px;
+  table-layout: fixed;
   font-size: 0.82rem;
+}
+
+.register-table .content-column {
+  width: 106px;
+}
+
+.register-table .person-column {
+  width: 60px;
+  min-width: 60px;
+  max-width: 60px;
+  overflow-wrap: anywhere;
+}
+
+.register-table th.person-column {
+  white-space: normal;
+  overflow-wrap: normal;
+  line-height: 1.1;
+  font-size: 0.68rem;
+  letter-spacing: 0;
 }
 
 .register-table th {
@@ -87,7 +108,7 @@ button.nav-link {
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.02em;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .register-table td {
@@ -103,6 +124,11 @@ button.nav-link {
 .inline-entry-row .form-select {
   min-width: 108px;
   font-size: 0.78rem;
+}
+
+.inline-entry-row .person-column .form-control {
+  width: 54px;
+  min-width: 54px;
 }
 
 .inline-entry-row input[type="date"] {

@@ -15,6 +15,7 @@ type Service = {
   text: string;
   textBy: string;
   vorrade: string;
+  vorradeBy: string;
   status: string;
   notes: string;
 };
@@ -28,6 +29,7 @@ type ApiService = {
   text_title: string;
   text_by: string;
   vorrade: string | null;
+  vorrade_by: string | null;
   lehr_status: "IN_PROGRESS" | "FINISHED" | null;
   notes: string | null;
 };
@@ -50,6 +52,7 @@ const blankDraft = () => ({
   text: "",
   textBy: "",
   vorrade: "",
+  vorradeBy: "",
   notes: "",
 });
 
@@ -72,9 +75,10 @@ const fromApi = (row: ApiService): Service => {
     text: row.text_title,
     textBy: row.text_by,
     vorrade: row.vorrade || "—",
+    vorradeBy: row.vorrade_by || "—",
     status:
       row.lehr_status === "IN_PROGRESS"
-        ? "In progress"
+        ? "In Progress"
         : row.lehr_status === "FINISHED"
           ? "Finished"
           : "—",
@@ -86,7 +90,7 @@ export default function Home() {
   const [active, setActive] = useState("Register");
   const [items, setItems] = useState<Service[]>([]);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("All services");
+  const [filter, setFilter] = useState("All Services");
   const [open, setOpen] = useState(false);
   const [mobile, setMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -129,7 +133,7 @@ export default function Home() {
       .then((rows) => setItems((rows as ApiService[]).map(fromApi)))
       .catch(() =>
         setSaveError(
-          "The SQLite database could not be reached. Check the container logs.",
+          "The SQLite Database Could Not Be Reached. Check The Container Logs.",
         ),
       );
   }, []);
@@ -138,7 +142,7 @@ export default function Home() {
     () =>
       items.filter(
         (service) =>
-          (filter === "All services" || service.type === filter) &&
+          (filter === "All Services" || service.type === filter) &&
           Object.values(service)
             .join(" ")
             .toLowerCase()
@@ -155,7 +159,7 @@ export default function Home() {
       body: JSON.stringify(payload),
     });
     const result = (await response.json()) as ApiService & { error?: string };
-    if (!response.ok) throw new Error(result.error || "Could not save service");
+    if (!response.ok) throw new Error(result.error || "Could Not Save Service");
     setItems((current) => [fromApi(result), ...current]);
   }
 
@@ -177,25 +181,26 @@ export default function Home() {
           text: String(form.get("editText")),
           textBy: String(form.get("editTextBy")),
           vorrade: String(form.get("editVorrade") || ""),
+          vorradeBy: String(form.get("editVorradeBy") || ""),
           status: String(form.get("editStatus") || "IN_PROGRESS"),
           notes: String(form.get("editNotes") || ""),
         }),
       });
       const result = (await response.json()) as ApiService & { error?: string };
-      if (!response.ok) throw new Error(result.error || "Could not update service");
+      if (!response.ok) throw new Error(result.error || "Could Not Update Service");
       const updated = fromApi(result);
       setItems((current) =>
         current.map((service) => (service.id === updated.id ? updated : service)),
       );
       setSelected(null);
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not update service");
+      setSaveError(error instanceof Error ? error.message : "Could Not Update Service");
     }
   }
 
   async function deleteSelectedService() {
     if (!selected) return;
-    if (!window.confirm("Delete this service? This cannot be undone.")) return;
+    if (!window.confirm("Delete This Service? This Cannot Be Undone.")) return;
     setSaveError("");
     try {
       const response = await fetch(apiUrl(), {
@@ -204,13 +209,13 @@ export default function Home() {
         body: JSON.stringify({ id: selected.id }),
       });
       const result = (await response.json()) as { id?: string; error?: string };
-      if (!response.ok) throw new Error(result.error || "Could not delete service");
+      if (!response.ok) throw new Error(result.error || "Could Not Delete Service");
       setItems((current) =>
         current.filter((service) => service.id !== selected.id),
       );
       setSelected(null);
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not delete service");
+      setSaveError(error instanceof Error ? error.message : "Could Not Delete Service");
     }
   }
 
@@ -227,12 +232,13 @@ export default function Home() {
         text: String(form.get("text")),
         textBy: String(form.get("textBy")),
         vorrade: String(form.get("vorrade") || ""),
+        vorradeBy: String(form.get("vorradeBy") || ""),
         notes: String(form.get("notes") || ""),
       });
       setOpen(false);
       setKind("");
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not save service");
+      setSaveError(error instanceof Error ? error.message : "Could Not Save Service");
     }
   }
 
@@ -252,6 +258,7 @@ export default function Home() {
         text: String(form.get("inlineText") || ""),
         textBy: String(form.get("inlineTextBy") || ""),
         vorrade: String(form.get("inlineVorrade") || ""),
+        vorradeBy: String(form.get("inlineVorradeBy") || ""),
         notes: String(form.get("inlineNotes") || ""),
       }),
     );
@@ -267,10 +274,11 @@ export default function Home() {
     const text = String(form.get("inlineText") || "").trim();
     const textBy = String(form.get("inlineTextBy") || "").trim();
     const vorrade = String(form.get("inlineVorrade") || "").trim();
+    const vorradeBy = String(form.get("inlineVorradeBy") || "").trim();
     const notes = String(form.get("inlineNotes") || "");
     if (!date || !type || !song || !songBy || !text || !textBy) {
       setSaveError(
-        "Complete Date, Type, Song, Song By, Text, and Text By.",
+        "Complete Date, Type, Song, Song By, Text, And Text By.",
       );
       return;
     }
@@ -283,13 +291,14 @@ export default function Home() {
         text,
         textBy,
         vorrade,
+        vorradeBy,
         notes,
       });
       sessionStorage.removeItem("sermon-register-service-draft");
       setDraft(blankDraft());
       setRowVersion((version) => version + 1);
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not save service");
+      setSaveError(error instanceof Error ? error.message : "Could Not Save Service");
     }
   }
 
@@ -336,7 +345,7 @@ export default function Home() {
           <button
             className="btn btn-link d-lg-none px-2"
             type="button"
-            aria-label="Open navigation"
+            aria-label="Open Navigation"
             onClick={() => setSidebarOpen(true)}
           >
             <i className="bi bi-list fs-4" />
@@ -354,7 +363,7 @@ export default function Home() {
             </span>
             <button className="btn btn-primary" type="button" onClick={startNew}>
               <i className="bi bi-plus-lg me-1" />
-              <span className="d-none d-sm-inline">New service</span>
+              <span className="d-none d-sm-inline">New Service</span>
               <span className="d-sm-none">New</span>
             </button>
           </div>
@@ -370,7 +379,7 @@ export default function Home() {
           <span className="brand-text fw-semibold">Sermon Register</span>
         </div>
         <div className="sidebar-wrapper">
-          <nav className="mt-2" aria-label="Main navigation">
+          <nav className="mt-2" aria-label="Main Navigation">
             <ul className="nav sidebar-menu flex-column" role="menu">
               {navItems.map((item) => (
                 <li className="nav-item" role="none" key={item.label}>
@@ -390,7 +399,7 @@ export default function Home() {
           </nav>
           <div className="sidebar-status">
             <i className="bi bi-shield-lock-fill me-2" />
-            Private SQLite register
+            Private SQLite Register
           </div>
         </div>
       </aside>
@@ -399,7 +408,7 @@ export default function Home() {
         <button
           type="button"
           className="sidebar-backdrop"
-          aria-label="Close navigation"
+          aria-label="Close Navigation"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -409,11 +418,11 @@ export default function Home() {
           <div className="container-fluid">
             <div className="row align-items-center">
               <div className="col-sm-6">
-                <h3 className="mb-0">{active === "Register" ? "Service register" : active}</h3>
+                <h3 className="mb-0">{active === "Register" ? "Service Register" : active}</h3>
                 <p className="text-body-secondary mb-0 mt-1">
                   {active === "Register"
-                    ? "Weekly Lehr and Gebet history"
-                    : `Reusable ${active.toLowerCase()} records`}
+                    ? "Weekly Lehr And Gebet History"
+                    : `Reusable ${active} Records`}
                 </p>
               </div>
               <div className="col-sm-6 d-none d-sm-block">
@@ -443,8 +452,8 @@ export default function Home() {
                           className="form-control"
                           value={query}
                           onChange={(event) => setQuery(event.target.value)}
-                          placeholder="Search texts, songs, people, or notes"
-                          aria-label="Search services"
+                          placeholder="Search Texts, Songs, People, Or Notes"
+                          aria-label="Search Services"
                         />
                       </div>
                     </div>
@@ -453,9 +462,9 @@ export default function Home() {
                         className="form-select"
                         value={filter}
                         onChange={(event) => setFilter(event.target.value)}
-                        aria-label="Service type"
+                        aria-label="Service Type"
                       >
-                        <option>All services</option>
+                        <option>All Services</option>
                         <option>Lehr</option>
                         <option>Gebet</option>
                       </select>
@@ -468,7 +477,7 @@ export default function Home() {
                     </div>
                     <div className="col-auto ms-lg-auto">
                       <span className="badge text-bg-primary rounded-pill">
-                        {items.length} services
+                        {items.length} Services
                       </span>
                     </div>
                   </div>
@@ -487,13 +496,14 @@ export default function Home() {
                       <tr>
                         <th>Date</th>
                         <th>Type</th>
-                        <th>Song</th>
-                        <th>Song by</th>
-                        <th>Text</th>
-                        <th>Text by</th>
-                        <th>Vorrade</th>
-                        <th>Status</th>
+                        <th className="content-column">Song</th>
+                        <th className="person-column">Song By</th>
+                        <th className="content-column">Text</th>
+                        <th className="person-column">Text By</th>
+                        <th className="content-column">Vorrade</th>
+                        <th className="person-column">Vorrade By</th>
                         <th>Notes</th>
+                        <th>Status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -509,7 +519,7 @@ export default function Home() {
                             name="inlineDate"
                             type="date"
                             defaultValue={draft.date}
-                            aria-label="New service date"
+                            aria-label="New Service Date"
                           />
                         </td>
                         <td>
@@ -524,58 +534,58 @@ export default function Home() {
                                 type: event.target.value as EntryType,
                               })
                             }
-                            aria-label="New service type"
+                            aria-label="New Service Type"
                           >
-                            <option value="">Choose type</option>
+                            <option value="">Choose Type</option>
                             <option>Lehr</option>
                             <option>Gebet</option>
                           </select>
                         </td>
-                        <td>
+                        <td className="content-column">
                           <input
                             className="form-control form-control-sm"
                             form="inline-service-form"
                             name="inlineSong"
                             list="songs-list"
                             defaultValue={draft.song}
-                            placeholder="Type new"
-                            aria-label="New service song"
+                            placeholder="Type New"
+                            aria-label="New Service Song"
                           />
                         </td>
-                        <td>
+                        <td className="person-column">
                           <input
                             className="form-control form-control-sm"
                             form="inline-service-form"
                             name="inlineSongBy"
                             list="people-list"
                             defaultValue={draft.songBy}
-                            placeholder="Type new"
-                            aria-label="New service song by"
+                            placeholder="Type New"
+                            aria-label="New Service Song By"
                           />
                         </td>
-                        <td>
+                        <td className="content-column">
                           <input
                             className="form-control form-control-sm"
                             form="inline-service-form"
                             name="inlineText"
                             list="texts-list"
                             defaultValue={draft.text}
-                            placeholder="Type new"
-                            aria-label="New service text"
+                            placeholder="Type New"
+                            aria-label="New Service Text"
                           />
                         </td>
-                        <td>
+                        <td className="person-column">
                           <input
                             className="form-control form-control-sm"
                             form="inline-service-form"
                             name="inlineTextBy"
                             list="people-list"
                             defaultValue={draft.textBy}
-                            placeholder="Type new"
-                            aria-label="New service text by"
+                            placeholder="Type New"
+                            aria-label="New Service Text By"
                           />
                         </td>
-                        <td>
+                        <td className="content-column">
                           {draft.type === "Lehr" ? (
                             <input
                               className="form-control form-control-sm"
@@ -583,12 +593,37 @@ export default function Home() {
                               name="inlineVorrade"
                               list="vorraden-list"
                               defaultValue={draft.vorrade}
-                              placeholder="Type new"
-                              aria-label="New service Vorrade"
+                              placeholder="Type New"
+                              aria-label="New Service Vorrade"
                             />
                           ) : (
                             <span className="text-body-secondary">—</span>
                           )}
+                        </td>
+                        <td className="person-column">
+                          {draft.type === "Lehr" ? (
+                            <input
+                              className="form-control form-control-sm"
+                              form="inline-service-form"
+                              name="inlineVorradeBy"
+                              list="people-list"
+                              defaultValue={draft.vorradeBy}
+                              placeholder="Type New"
+                              aria-label="New Service Vorrade By"
+                            />
+                          ) : (
+                            <span className="text-body-secondary">—</span>
+                          )}
+                        </td>
+                        <td>
+                          <input
+                            className="form-control form-control-sm"
+                            form="inline-service-form"
+                            name="inlineNotes"
+                            defaultValue={draft.notes}
+                            placeholder="Add Notes"
+                            aria-label="New Service Notes"
+                          />
                         </td>
                         <td>
                           <span className="inline-entry-actions">
@@ -607,16 +642,6 @@ export default function Home() {
                               Clear
                             </button>
                           </span>
-                        </td>
-                        <td>
-                          <input
-                            className="form-control form-control-sm"
-                            form="inline-service-form"
-                            name="inlineNotes"
-                            defaultValue={draft.notes}
-                            placeholder="Add notes"
-                            aria-label="New service notes"
-                          />
                         </td>
                       </tr>
 
@@ -644,16 +669,17 @@ export default function Home() {
                             </span>
                           </td>
                           <td>{service.song}</td>
-                          <td>{service.songBy}</td>
+                          <td className="person-column">{service.songBy}</td>
                           <td className="fw-semibold">{service.text}</td>
-                          <td>{service.textBy}</td>
+                          <td className="person-column">{service.textBy}</td>
                           <td>{service.vorrade}</td>
+                          <td className="person-column">{service.vorradeBy}</td>
+                          <td className="note-cell">{service.notes}</td>
                           <td>
                             <span className="badge text-bg-secondary">
                               {service.status}
                             </span>
                           </td>
-                          <td className="note-cell">{service.notes}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -682,6 +708,11 @@ export default function Home() {
                       <small className="d-block text-body-secondary mt-1">
                         {service.song} · {service.textBy}
                       </small>
+                      {service.type === "Lehr" && service.vorrade !== "—" && (
+                        <small className="d-block text-body-secondary mt-1">
+                          {service.vorrade} · {service.vorradeBy}
+                        </small>
+                      )}
                       <span className="badge text-bg-secondary mt-2">
                         {service.status}
                       </span>
@@ -692,7 +723,7 @@ export default function Home() {
                 {!visible.length && (
                   <div className="card-body text-center text-body-secondary py-5">
                     <i className="bi bi-inbox fs-2 d-block mb-2" />
-                    No services match your search.
+                    No Services Match Your Search.
                   </div>
                 )}
               </div>
@@ -704,7 +735,7 @@ export default function Home() {
                   </div>
                   <h4>{active}</h4>
                   <p className="text-body-secondary mb-0">
-                    This reusable-record view is ready for the next development stage.
+                    This Reusable-Record View Is Ready For The Next Development Stage.
                   </p>
                 </div>
               </div>
@@ -717,7 +748,7 @@ export default function Home() {
         <span className="float-end d-none d-sm-inline app-version">
           Version {__APP_VERSION__}
         </span>
-        <strong>Sermon Register</strong> · Private SQLite storage
+          <strong>Sermon Register</strong> · Private SQLite Storage
       </footer>
 
       <nav className="mobile-tabbar nav nav-pills nav-fill border-top shadow-lg">
@@ -747,10 +778,10 @@ export default function Home() {
               <div className="modal-header">
                 <div>
                   <small className="text-uppercase text-body-secondary">
-                    Register entry
+                    Register Entry
                   </small>
                   <h5 className="modal-title" id="new-service-title">
-                    New service
+                    New Service
                   </h5>
                 </div>
                 <button
@@ -777,7 +808,7 @@ export default function Home() {
                     </div>
                     <div className="col-md-6">
                       <label className="form-label" htmlFor="service-type">
-                        Service type
+                        Service Type
                       </label>
                       <select
                         className="form-select"
@@ -788,7 +819,7 @@ export default function Home() {
                         }
                         required
                       >
-                        <option value="">Choose type</option>
+                        <option value="">Choose Type</option>
                         <option>Lehr</option>
                         <option>Gebet</option>
                       </select>
@@ -802,20 +833,20 @@ export default function Home() {
                         id="service-song"
                         name="song"
                         list="songs-list"
-                        placeholder="Type a new song"
+                        placeholder="Type A New Song"
                         required
                       />
                     </div>
                     <div className="col-md-6">
                       <label className="form-label" htmlFor="service-song-by">
-                        Song by
+                        Song By
                       </label>
                       <input
                         className="form-control"
                         id="service-song-by"
                         name="songBy"
                         list="people-list"
-                        placeholder="Type a new person"
+                        placeholder="Type A New Person"
                         required
                       />
                     </div>
@@ -828,36 +859,50 @@ export default function Home() {
                         id="service-text"
                         name="text"
                         list="texts-list"
-                        placeholder="Type a new text"
+                        placeholder="Type A New Text"
                         required
                       />
                     </div>
                     <div className="col-md-6">
                       <label className="form-label" htmlFor="service-text-by">
-                        Text by
+                        Text By
                       </label>
                       <input
                         className="form-control"
                         id="service-text-by"
                         name="textBy"
                         list="people-list"
-                        placeholder="Type a new person"
+                        placeholder="Type A New Person"
                         required
                       />
                     </div>
                     {kind === "Lehr" && (
-                      <div className="col-md-6">
-                        <label className="form-label" htmlFor="service-vorrade">
-                          Vorrade
-                        </label>
-                        <input
-                          className="form-control"
-                          id="service-vorrade"
-                          name="vorrade"
-                          list="vorraden-list"
-                          placeholder="Type a new Vorrade"
-                        />
-                      </div>
+                      <>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="service-vorrade">
+                            Vorrade
+                          </label>
+                          <input
+                            className="form-control"
+                            id="service-vorrade"
+                            name="vorrade"
+                            list="vorraden-list"
+                            placeholder="Type A New Vorrade"
+                          />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="service-vorrade-by">
+                            Vorrade By
+                          </label>
+                          <input
+                            className="form-control"
+                            id="service-vorrade-by"
+                            name="vorradeBy"
+                            list="people-list"
+                            placeholder="Type A New Person"
+                          />
+                        </div>
+                      </>
                     )}
                     <div className="col-12">
                       <label className="form-label" htmlFor="service-notes">
@@ -868,7 +913,7 @@ export default function Home() {
                         id="service-notes"
                         name="notes"
                         rows={3}
-                        placeholder="Notes for this service"
+                        placeholder="Notes For This Service"
                       />
                     </div>
                   </div>
@@ -883,7 +928,7 @@ export default function Home() {
                   </button>
                   <button className="btn btn-primary" type="submit">
                     <i className="bi bi-check-lg me-1" />
-                    Save service
+                    Save Service
                   </button>
                 </div>
               </form>
@@ -905,16 +950,16 @@ export default function Home() {
               <div className="modal-header">
                 <div>
                   <small className="text-uppercase text-body-secondary">
-                    Existing register entry
+                    Existing Register Entry
                   </small>
                   <h5 className="modal-title" id="edit-service-title">
-                    Edit service
+                    Edit Service
                   </h5>
                 </div>
                 <button
                   type="button"
                   className="btn-close"
-                  aria-label="Close editor"
+                  aria-label="Close Editor"
                   onClick={() => setSelected(null)}
                 />
               </div>
@@ -942,7 +987,7 @@ export default function Home() {
                     </div>
                     <div className="col-md-6">
                       <label className="form-label" htmlFor="edit-service-type">
-                        Service type
+                        Service Type
                       </label>
                       <select
                         className="form-select"
@@ -973,7 +1018,7 @@ export default function Home() {
                     </div>
                     <div className="col-md-6">
                       <label className="form-label" htmlFor="edit-service-song-by">
-                        Song by
+                        Song By
                       </label>
                       <input
                         className="form-control"
@@ -999,7 +1044,7 @@ export default function Home() {
                     </div>
                     <div className="col-md-6">
                       <label className="form-label" htmlFor="edit-service-text-by">
-                        Text by
+                        Text By
                       </label>
                       <input
                         className="form-control"
@@ -1026,7 +1071,7 @@ export default function Home() {
                         </div>
                         <div className="col-md-6">
                           <label className="form-label" htmlFor="edit-service-status">
-                            Lehr status
+                            Lehr Status
                           </label>
                           <select
                             className="form-select"
@@ -1038,9 +1083,23 @@ export default function Home() {
                                 : "IN_PROGRESS"
                             }
                           >
-                            <option value="IN_PROGRESS">In progress</option>
+                            <option value="IN_PROGRESS">In Progress</option>
                             <option value="FINISHED">Finished</option>
                           </select>
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="edit-service-vorrade-by">
+                            Vorrade By
+                          </label>
+                          <input
+                            className="form-control"
+                            id="edit-service-vorrade-by"
+                            name="editVorradeBy"
+                            list="people-list"
+                            defaultValue={
+                              selected.vorradeBy === "—" ? "" : selected.vorradeBy
+                            }
+                          />
                         </div>
                       </>
                     )}
@@ -1063,10 +1122,10 @@ export default function Home() {
                       <div>
                         <h6 className="mb-1">
                           <i className="bi bi-file-earmark-pdf me-2" />
-                          PDF attachments
+                          PDF Attachments
                         </h6>
                         <small className="text-body-secondary">
-                          Documents for this service stay private.
+                          Documents For This Service Stay Private.
                         </small>
                       </div>
                       <button className="btn btn-outline-primary btn-sm" type="button">
@@ -1083,7 +1142,7 @@ export default function Home() {
                     onClick={deleteSelectedService}
                   >
                     <i className="bi bi-trash3 me-1" />
-                    Delete service
+                    Delete Service
                   </button>
                   <div className="d-flex gap-2">
                     <button
@@ -1095,7 +1154,7 @@ export default function Home() {
                     </button>
                     <button className="btn btn-primary" type="submit">
                       <i className="bi bi-check-lg me-1" />
-                      Save changes
+                      Save Changes
                     </button>
                   </div>
                 </div>
