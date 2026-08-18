@@ -70,6 +70,7 @@ type TextRecord = {
   songsForText: string;
   notes: string;
   timesUsed: number;
+  serviceCount: number;
   lastUsedValue: string;
   lastUsed: string;
   attachmentCount: number;
@@ -83,6 +84,7 @@ type ApiTextRecord = {
   songs_for_text: string | null;
   notes: string | null;
   times_used: number;
+  service_count: number;
   last_used: string | null;
   attachment_count: number;
 };
@@ -188,6 +190,7 @@ const textFromApi = (row: ApiTextRecord): TextRecord => ({
   songsForText: row.songs_for_text || "",
   notes: row.notes || "",
   timesUsed: Number(row.times_used || 0),
+  serviceCount: Number(row.service_count || 0),
   lastUsedValue: row.last_used || "",
   lastUsed: row.last_used
     ? new Date(`${row.last_used}T12:00:00`).toLocaleDateString("en-US", {
@@ -592,6 +595,28 @@ export default function Home() {
       setTextEditor(saved);
     } catch (error) {
       setTextError(error instanceof Error ? error.message : "Could Not Save Text");
+    }
+  }
+
+  async function deleteText() {
+    if (!textEditor || textEditor === "new" || textEditor.serviceCount > 0) return;
+    if (!window.confirm("Delete This Text? This Cannot Be Undone.")) return;
+    setTextError("");
+    try {
+      const response = await fetch(textsApiUrl(), {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: textEditor.id }),
+      });
+      const result = (await response.json()) as { id?: string; error?: string };
+      if (!response.ok) throw new Error(result.error || "Could Not Delete Text");
+      setTexts((current) =>
+        current.filter((record) => record.id !== textEditor.id),
+      );
+      setTextAttachments([]);
+      setTextEditor(null);
+    } catch (error) {
+      setTextError(error instanceof Error ? error.message : "Could Not Delete Text");
     }
   }
 
@@ -2642,18 +2667,39 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-                <div className="modal-footer">
-                  <button
-                    type="button"
-                    className="btn btn-outline-secondary"
-                    onClick={() => setTextEditor(null)}
-                  >
-                    Close
-                  </button>
-                  <button className="btn btn-primary" type="submit">
-                    <i className="bi bi-check-lg me-1" />
-                    Save Text
-                  </button>
+                <div
+                  className={`modal-footer ${
+                    textEditor !== "new" ? "justify-content-between" : ""
+                  }`}
+                >
+                  {textEditor !== "new" &&
+                    (textEditor.serviceCount === 0 ? (
+                      <button
+                        type="button"
+                        className="btn btn-danger"
+                        onClick={deleteText}
+                      >
+                        <i className="bi bi-trash3 me-1" />
+                        Delete Text
+                      </button>
+                    ) : (
+                      <small className="text-body-secondary">
+                        Used Texts Cannot Be Deleted.
+                      </small>
+                    ))}
+                  <div className="d-flex gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary"
+                      onClick={() => setTextEditor(null)}
+                    >
+                      Close
+                    </button>
+                    <button className="btn btn-primary" type="submit">
+                      <i className="bi bi-check-lg me-1" />
+                      Save Text
+                    </button>
+                  </div>
                 </div>
               </form>
             </div>

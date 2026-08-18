@@ -124,7 +124,7 @@ Songs are selected and displayed by Title. Any song number is entered as part of
 | `created_at` | text | required |
 | `updated_at` | text | required |
 
-A Text is reusable and does not contain service dates or completion state. `songs_for_text` is displayed as **Songs For This Sermon**; it is an intentionally unstructured text box and does not create Song relationships. The Texts view shows Text, Description, the first line of Scripture Reference, Times Used, Last Used, Notes, and PDF count. Times Used counts only Lehr services, not their continuing Gebets. The view can be sorted by Text, Times Used, or Last Used in either direction.
+A Text is reusable and does not contain service dates or completion state. `songs_for_text` is displayed as **Songs For This Sermon**; it is an intentionally unstructured text box and does not create Song relationships. The Texts view shows Text, Description, the first line of Scripture Reference, Times Used, Last Used, Notes, and PDF count. Times Used counts only Lehr services, not their continuing Gebets. The view can be sorted by Text, Times Used, or Last Used in either direction. A Text may be deleted only when no service of either type references it; the server enforces this rule and removes the unused Text's PDF attachments with it.
 
 ### `vorraden`
 
@@ -358,7 +358,7 @@ These are intentionally unresolved; none requires redesigning the core schema un
 4. **Vorrade rules:** can a Lehr omit a Vorrade, and when a Vorrade exists must Vorrade By exist? Both are currently optional as a pair.
 5. **Song identity:** the Title, including any number, is the user-facing identity. If multiple hymnals later require otherwise identical titles, add a `hymnals` table and distinguish them in the selector.
 6. **Attachment import:** PDF source naming and matching rules remain unknown.
-7. **Deletion policy:** recommended default is deactivate master records and restrict deletion of referenced data. Confirm whether an administrator needs permanent deletion and an audit trail.
+7. **Deletion policy:** unused Texts may be permanently deleted, while referenced Texts are restricted. Confirm the permanent-deletion and audit rules for the other reusable master records.
 8. **Server platform:** operating system, domain, TLS method, and backup destination remain deployment choices.
 
 ## Explicitly out of scope for the first release

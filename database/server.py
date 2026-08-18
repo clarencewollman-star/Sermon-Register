@@ -322,6 +322,7 @@ def text_rows(con):
            COUNT(DISTINCT CASE
              WHEN services.service_type = 'LEHR' THEN services.id
            END) AS times_used,
+           COUNT(DISTINCT services.id) AS service_count,
            MAX(services.service_date) AS last_used,
            COUNT(DISTINCT attachments.id) AS attachment_count
       FROM texts
@@ -1006,6 +1007,48 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path = urlparse(self.path).path
+        if path == "/texts":
+            try:
+                body = self.body()
+                text_id = str(body.get("id", "")).strip()
+                if not text_id:
+                    return self.json({"error": "Text id is required"}, 400)
+                with connect() as con:
+                    text_record = con.execute(
+                        "SELECT id FROM texts WHERE id = ?", (text_id,)
+                    ).fetchone()
+                    if not text_record:
+                        return self.json({"error": "Text not found"}, 404)
+                    service_count = con.execute(
+                        "SELECT COUNT(*) FROM services WHERE text_id = ?", (text_id,)
+                    ).fetchone()[0]
+                    if service_count:
+                        return self.json(
+                            {
+                                "error": (
+                                    "This Text has been used in a service and cannot "
+                                    "be deleted"
+                                )
+                            },
+                            409,
+                        )
+                    attachment_paths = [
+                        attachment_path(row["storage_key"])
+                        for row in con.execute(
+                            "SELECT storage_key FROM text_attachments WHERE text_id = ?",
+                            (text_id,),
+                        )
+                    ]
+                    con.execute("DELETE FROM texts WHERE id = ?", (text_id,))
+                    con.commit()
+                for file_path in attachment_paths:
+                    try:
+                        file_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                return self.json({"id": text_id})
+            except Exception as exc:
+                return self.json({"error": str(exc)}, 500)
         if path == "/text-attachments":
             try:
                 body = self.body()

@@ -4,7 +4,10 @@ const databaseUrl = () => {
   return servicesUrl.replace(/\/services$/, "/texts");
 };
 
-async function forward(method: "GET" | "POST" | "PUT", request?: Request) {
+async function forward(
+  method: "GET" | "POST" | "PUT" | "DELETE",
+  request?: Request,
+) {
   try {
     const response = await fetch(databaseUrl(), {
       method,
@@ -36,4 +39,8 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   return forward("PUT", request);
+}
+
+export async function DELETE(request: Request) {
+  return forward("DELETE", request);
 }
