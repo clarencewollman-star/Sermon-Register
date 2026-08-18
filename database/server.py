@@ -319,7 +319,9 @@ def text_rows(con):
     sql = """
     SELECT texts.id, texts.text, texts.description,
            texts.scripture_reference, texts.songs_for_text, texts.notes,
-           COUNT(DISTINCT services.id) AS times_used,
+           COUNT(DISTINCT CASE
+             WHEN services.service_type = 'LEHR' THEN services.id
+           END) AS times_used,
            MAX(services.service_date) AS last_used,
            COUNT(DISTINCT attachments.id) AS attachment_count
       FROM texts
