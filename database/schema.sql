@@ -13,11 +13,10 @@ CREATE TABLE IF NOT EXISTS songs (
 
 CREATE TABLE IF NOT EXISTS texts (
   id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
+  text TEXT NOT NULL COLLATE NOCASE,
+  description TEXT,
   scripture_reference TEXT,
-  text_information TEXT,
   notes TEXT,
-  active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -123,6 +122,17 @@ CREATE TABLE IF NOT EXISTS service_imports (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS text_attachments (
+  id TEXT PRIMARY KEY,
+  text_id TEXT NOT NULL REFERENCES texts(id) ON DELETE CASCADE,
+  original_file_name TEXT NOT NULL,
+  storage_key TEXT NOT NULL UNIQUE,
+  mime_type TEXT NOT NULL CHECK (mime_type = 'application/pdf'),
+  byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+  sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS vorrade_attachments (
   id TEXT PRIMARY KEY,
   vorrade_id TEXT NOT NULL REFERENCES vorraden(id) ON DELETE CASCADE,
@@ -144,12 +154,13 @@ CREATE INDEX IF NOT EXISTS services_text_by_idx ON services(text_by_person_id);
 CREATE INDEX IF NOT EXISTS services_vorrade_idx ON services(vorrade_id);
 CREATE INDEX IF NOT EXISTS services_vorrade_by_idx ON services(vorrade_by_person_id);
 CREATE INDEX IF NOT EXISTS people_name_idx ON people(name COLLATE NOCASE);
-CREATE INDEX IF NOT EXISTS texts_title_idx ON texts(title COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS texts_text_idx ON texts(text COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS texts_scripture_idx ON texts(scripture_reference COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS vorraden_title_idx ON vorraden(title COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS songs_title_idx ON songs(title COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS service_attachments_owner_idx ON service_attachments(service_id);
 CREATE INDEX IF NOT EXISTS vorrade_attachments_owner_idx ON vorrade_attachments(vorrade_id);
 CREATE INDEX IF NOT EXISTS service_imports_service_idx ON service_imports(service_id);
+CREATE INDEX IF NOT EXISTS text_attachments_owner_idx ON text_attachments(text_id);
 
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;

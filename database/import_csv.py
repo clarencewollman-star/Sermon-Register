@@ -130,7 +130,7 @@ def import_csv(csv_path, database_path):
             song_by_id = optional_master_id(
                 connection, "people", "name", record["song_by"]
             )
-            text_id = master_id(connection, "texts", "title", record["text"])
+            text_id = master_id(connection, "texts", "text", record["text"])
             text_by_id = optional_master_id(
                 connection, "people", "name", record["text_by"]
             )

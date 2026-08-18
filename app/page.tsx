@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 
 declare const __APP_VERSION__: string;
 
@@ -62,8 +62,40 @@ type ApiSong = {
   last_used: string | null;
 };
 
+type TextRecord = {
+  id: string;
+  text: string;
+  description: string;
+  scriptureReference: string;
+  notes: string;
+  timesUsed: number;
+  lastUsedValue: string;
+  lastUsed: string;
+  attachmentCount: number;
+};
+
+type ApiTextRecord = {
+  id: string;
+  text: string;
+  description: string | null;
+  scripture_reference: string | null;
+  notes: string | null;
+  times_used: number;
+  last_used: string | null;
+  attachment_count: number;
+};
+
+type TextAttachment = {
+  id: string;
+  text_id: string;
+  original_file_name: string;
+  byte_size: number;
+  created_at: string;
+};
+
 type EntryType = "" | "Lehr" | "Gebet";
 type SongSortField = "title" | "tags" | "timesUsed";
+type TextSortField = "text" | "timesUsed" | "lastUsed";
 
 const navItems = [
   { label: "Register", icon: "bi-table" },
@@ -88,6 +120,8 @@ const blankDraft = () => ({
 
 const apiUrl = () => "/api/services";
 const songsApiUrl = () => "/api/songs";
+const textsApiUrl = () => "/api/texts";
+const textAttachmentsApiUrl = () => "/api/text-attachments";
 
 const fromApi = (row: ApiService): Service => {
   const date = new Date(`${row.service_date}T12:00:00`);
@@ -144,6 +178,39 @@ const songFromApi = (row: ApiSong): Song => ({
     : "Never",
 });
 
+const textFromApi = (row: ApiTextRecord): TextRecord => ({
+  id: row.id,
+  text: row.text,
+  description: row.description || "",
+  scriptureReference: row.scripture_reference || "",
+  notes: row.notes || "",
+  timesUsed: Number(row.times_used || 0),
+  lastUsedValue: row.last_used || "",
+  lastUsed: row.last_used
+    ? new Date(`${row.last_used}T12:00:00`).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+    : "Never",
+  attachmentCount: Number(row.attachment_count || 0),
+});
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return window.btoa(binary);
+}
+
 export default function Home() {
   const [active, setActive] = useState("Register");
   const [items, setItems] = useState<Service[]>([]);
@@ -165,6 +232,14 @@ export default function Home() {
   const [songSortDirection, setSongSortDirection] = useState<"asc" | "desc">("asc");
   const [songEditor, setSongEditor] = useState<Song | "new" | null>(null);
   const [songError, setSongError] = useState("");
+  const [texts, setTexts] = useState<TextRecord[]>([]);
+  const [textQuery, setTextQuery] = useState("");
+  const [textSort, setTextSort] = useState<TextSortField>("text");
+  const [textSortDirection, setTextSortDirection] = useState<"asc" | "desc">("asc");
+  const [textEditor, setTextEditor] = useState<TextRecord | "new" | null>(null);
+  const [textError, setTextError] = useState("");
+  const [textAttachments, setTextAttachments] = useState<TextAttachment[]>([]);
+  const [pdfUploading, setPdfUploading] = useState(false);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
@@ -172,6 +247,16 @@ export default function Home() {
     update();
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    fetch(textsApiUrl())
+      .then((response) => {
+        if (!response.ok) throw new Error("Texts unavailable");
+        return response.json();
+      })
+      .then((rows) => setTexts((rows as ApiTextRecord[]).map(textFromApi)))
+      .catch(() => setTextError("The Texts Could Not Be Loaded."));
   }, []);
 
   useEffect(() => {
@@ -260,6 +345,38 @@ export default function Home() {
     [songs, songQuery, songSort, songSortDirection],
   );
 
+  const visibleTexts = useMemo(
+    () => {
+      const filteredTexts = texts.filter((record) =>
+        `${record.text} ${record.description} ${record.scriptureReference} ${record.notes}`
+          .toLowerCase()
+          .includes(textQuery.toLowerCase()),
+      );
+      return filteredTexts.sort((left, right) => {
+        const comparison =
+          textSort === "timesUsed"
+            ? left.timesUsed - right.timesUsed
+            : textSort === "lastUsed"
+              ? left.lastUsedValue.localeCompare(right.lastUsedValue)
+              : left.text.localeCompare(right.text, undefined, {
+                  numeric: true,
+                  sensitivity: "base",
+                });
+        return textSortDirection === "asc" ? comparison : -comparison;
+      });
+    },
+    [texts, textQuery, textSort, textSortDirection],
+  );
+
+  function changeTextSort(field: TextSortField) {
+    if (textSort === field) {
+      setTextSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setTextSort(field);
+    setTextSortDirection(field === "text" ? "asc" : "desc");
+  }
+
   function changeSongSort(field: SongSortField) {
     if (songSort === field) {
       setSongSortDirection((current) => (current === "asc" ? "desc" : "asc"));
@@ -274,6 +391,27 @@ export default function Home() {
     if (!response.ok) throw new Error("Could Not Refresh Songs");
     const rows = (await response.json()) as ApiSong[];
     setSongs(rows.map(songFromApi));
+  }
+
+  async function refreshTexts() {
+    const response = await fetch(textsApiUrl(), { cache: "no-store" });
+    if (!response.ok) throw new Error("Could Not Refresh Texts");
+    const rows = (await response.json()) as ApiTextRecord[];
+    setTexts(rows.map(textFromApi));
+  }
+
+  async function loadTextAttachments(textId: string) {
+    const response = await fetch(
+      `${textAttachmentsApiUrl()}?textId=${encodeURIComponent(textId)}`,
+      { cache: "no-store" },
+    );
+    const result = (await response.json()) as TextAttachment[] | { error?: string };
+    if (!response.ok || !Array.isArray(result)) {
+      throw new Error(
+        (!Array.isArray(result) && result.error) || "Could Not Load PDFs",
+      );
+    }
+    setTextAttachments(result);
   }
 
   async function createService(payload: Record<string, string>) {
@@ -295,6 +433,7 @@ export default function Home() {
       ),
     ]);
     void refreshSongs().catch(() => setSongError("The Songs Could Not Be Refreshed."));
+    void refreshTexts().catch(() => setTextError("The Texts Could Not Be Refreshed."));
   }
 
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
@@ -335,6 +474,7 @@ export default function Home() {
       );
       setSelected(null);
       void refreshSongs().catch(() => setSongError("The Songs Could Not Be Refreshed."));
+      void refreshTexts().catch(() => setTextError("The Texts Could Not Be Refreshed."));
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could Not Update Service");
     }
@@ -357,6 +497,7 @@ export default function Home() {
       );
       setSelected(null);
       void refreshSongs().catch(() => setSongError("The Songs Could Not Be Refreshed."));
+      void refreshTexts().catch(() => setTextError("The Texts Could Not Be Refreshed."));
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could Not Delete Service");
     }
@@ -397,6 +538,130 @@ export default function Home() {
     } catch (error) {
       setSongError(error instanceof Error ? error.message : "Could Not Save Song");
     }
+  }
+
+  function openTextEditor(record: TextRecord) {
+    setTextError("");
+    setTextAttachments([]);
+    setTextEditor(record);
+    void loadTextAttachments(record.id).catch((error) =>
+      setTextError(error instanceof Error ? error.message : "Could Not Load PDFs"),
+    );
+  }
+
+  async function saveText(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!textEditor) return;
+    const form = new FormData(event.currentTarget);
+    const text = String(form.get("textText") || "").trim();
+    if (!text) {
+      setTextError("Text Is Required.");
+      return;
+    }
+    setTextError("");
+    try {
+      const response = await fetch(textsApiUrl(), {
+        method: textEditor === "new" ? "POST" : "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: textEditor === "new" ? "" : textEditor.id,
+          text,
+          description: String(form.get("textDescription") || ""),
+          scriptureReference: String(form.get("textScriptureReference") || ""),
+          notes: String(form.get("textNotes") || ""),
+        }),
+      });
+      const result = (await response.json()) as ApiTextRecord & { error?: string };
+      if (!response.ok) throw new Error(result.error || "Could Not Save Text");
+      const saved = textFromApi(result);
+      setTexts((current) => {
+        const next =
+          textEditor === "new"
+            ? [...current, saved]
+            : current.map((record) => (record.id === saved.id ? saved : record));
+        return next.sort((left, right) => left.text.localeCompare(right.text));
+      });
+      setTextEditor(saved);
+    } catch (error) {
+      setTextError(error instanceof Error ? error.message : "Could Not Save Text");
+    }
+  }
+
+  async function uploadTextPdfs(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const files = Array.from(input.files || []);
+    if (!files.length || !textEditor || textEditor === "new") return;
+    setPdfUploading(true);
+    setTextError("");
+    try {
+      for (const file of files) {
+        if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+          throw new Error(`${file.name} Is Not A PDF File.`);
+        }
+        if (file.size > 25 * 1024 * 1024) {
+          throw new Error(`${file.name} Is Larger Than 25 MB.`);
+        }
+        const response = await fetch(textAttachmentsApiUrl(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            textId: textEditor.id,
+            fileName: file.name,
+            mimeType: file.type || "application/pdf",
+            data: arrayBufferToBase64(await file.arrayBuffer()),
+          }),
+        });
+        const result = (await response.json()) as TextAttachment & { error?: string };
+        if (!response.ok) throw new Error(result.error || `Could Not Add ${file.name}`);
+      }
+      await loadTextAttachments(textEditor.id);
+      await refreshTexts();
+    } catch (error) {
+      setTextError(error instanceof Error ? error.message : "Could Not Add PDFs");
+    } finally {
+      input.value = "";
+      setPdfUploading(false);
+    }
+  }
+
+  async function removeTextAttachment(attachment: TextAttachment) {
+    if (!window.confirm(`Remove ${attachment.original_file_name}?`)) return;
+    setTextError("");
+    try {
+      const response = await fetch(textAttachmentsApiUrl(), {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: attachment.id }),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(result.error || "Could Not Remove PDF");
+      setTextAttachments((current) =>
+        current.filter((record) => record.id !== attachment.id),
+      );
+      await refreshTexts();
+    } catch (error) {
+      setTextError(error instanceof Error ? error.message : "Could Not Remove PDF");
+    }
+  }
+
+  function openSongFromRegister(title: string) {
+    const song = songs.find(
+      (record) => record.title.localeCompare(title, undefined, { sensitivity: "base" }) === 0,
+    );
+    if (!song) return;
+    setActive("Songs");
+    setSongError("");
+    setSongEditor(song);
+  }
+
+  function openTextFromRegister(value: string) {
+    const record = texts.find(
+      (candidate) =>
+        candidate.text.localeCompare(value, undefined, { sensitivity: "base" }) === 0,
+    );
+    if (!record) return;
+    setActive("Texts");
+    openTextEditor(record);
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -881,9 +1146,33 @@ export default function Home() {
                               {service.type}
                             </span>
                           </td>
-                          <td className="song-column">{service.song}</td>
+                          <td className="song-column">
+                            {service.song ? (
+                              <button
+                                className="btn btn-link register-record-link"
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openSongFromRegister(service.song);
+                                }}
+                              >
+                                {service.song}
+                              </button>
+                            ) : null}
+                          </td>
                           <td className="person-column">{service.songBy}</td>
-                          <td className="fw-semibold text-column">{service.text}</td>
+                          <td className="fw-semibold text-column">
+                            <button
+                              className="btn btn-link register-record-link fw-semibold"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openTextFromRegister(service.text);
+                              }}
+                            >
+                              {service.text}
+                            </button>
+                          </td>
                           <td className="person-column">{service.textBy}</td>
                           <td className="vorrade-column">{service.vorrade}</td>
                           <td className="person-column">{service.vorradeBy}</td>
@@ -904,11 +1193,16 @@ export default function Home() {
 
                 <div className="list-group list-group-flush mobile-service-list">
                   {visible.map((service) => (
-                    <button
-                      type="button"
+                    <div
                       className="list-group-item list-group-item-action p-3"
                       key={service.id}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => openService(service)}
+                      onKeyDown={(event) =>
+                        (event.key === "Enter" || event.key === " ") &&
+                        openService(service)
+                      }
                     >
                       <span className="d-flex justify-content-between gap-3">
                         <strong>
@@ -920,10 +1214,32 @@ export default function Home() {
                           {service.type}
                         </span>
                       </span>
-                      <span className="d-block fw-semibold mt-3">{service.text}</span>
+                      <button
+                        className="btn btn-link register-record-link d-block fw-semibold mt-3"
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openTextFromRegister(service.text);
+                        }}
+                      >
+                        {service.text}
+                      </button>
                       {(service.song || service.textBy) && (
                         <small className="d-block text-body-secondary mt-1">
-                          {[service.song, service.textBy].filter(Boolean).join(" · ")}
+                          {service.song && (
+                            <button
+                              className="btn btn-link register-record-link small-link"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openSongFromRegister(service.song);
+                              }}
+                            >
+                              {service.song}
+                            </button>
+                          )}
+                          {service.song && service.textBy ? " · " : ""}
+                          {service.textBy}
                         </small>
                       )}
                       {service.type === "Lehr" && service.vorrade && (
@@ -938,7 +1254,7 @@ export default function Home() {
                           {service.status}
                         </span>
                       )}
-                    </button>
+                    </div>
                   ))}
                 </div>
 
@@ -946,6 +1262,257 @@ export default function Home() {
                   <div className="card-body text-center text-body-secondary py-5">
                     <i className="bi bi-inbox fs-2 d-block mb-2" />
                     No Services Match Your Search.
+                  </div>
+                )}
+              </div>
+            ) : active === "Texts" ? (
+              <div className="card card-primary card-outline shadow-sm texts-card">
+                <div className="card-header border-bottom">
+                  <div className="row g-2 align-items-center">
+                    <div className="col-12 col-md">
+                      <div className="input-group">
+                        <span className="input-group-text">
+                          <i className="bi bi-search" />
+                        </span>
+                        <input
+                          className="form-control"
+                          value={textQuery}
+                          onChange={(event) => setTextQuery(event.target.value)}
+                          placeholder="Search Texts, Descriptions, Scripture References, Or Notes"
+                          aria-label="Search Texts"
+                        />
+                      </div>
+                    </div>
+                    <div className="col-8 d-md-none">
+                      <select
+                        className="form-select"
+                        value={textSort}
+                        onChange={(event) => {
+                          const field = event.target.value as TextSortField;
+                          setTextSort(field);
+                          setTextSortDirection(field === "text" ? "asc" : "desc");
+                        }}
+                        aria-label="Sort Texts By"
+                      >
+                        <option value="text">Sort By Text</option>
+                        <option value="timesUsed">Sort By Times Used</option>
+                        <option value="lastUsed">Sort By Last Used</option>
+                      </select>
+                    </div>
+                    <div className="col-4 d-md-none">
+                      <button
+                        className="btn btn-outline-secondary w-100"
+                        type="button"
+                        onClick={() =>
+                          setTextSortDirection((current) =>
+                            current === "asc" ? "desc" : "asc",
+                          )
+                        }
+                        aria-label={
+                          textSortDirection === "asc"
+                            ? "Sort Descending"
+                            : "Sort Ascending"
+                        }
+                      >
+                        <i
+                          className={`bi ${
+                            textSortDirection === "asc"
+                              ? "bi-sort-up"
+                              : "bi-sort-down"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                    <div className="col-auto">
+                      <span className="badge text-bg-primary rounded-pill">
+                        {visibleTexts.length} Texts
+                      </span>
+                    </div>
+                    <div className="col-auto">
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        onClick={() => {
+                          setTextError("");
+                          setTextAttachments([]);
+                          setTextEditor("new");
+                        }}
+                      >
+                        <i className="bi bi-plus-lg me-1" />
+                        Add Text
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {textError && !textEditor && (
+                  <div className="alert alert-danger m-3 mb-0" role="alert">
+                    <i className="bi bi-exclamation-triangle-fill me-2" />
+                    {textError}
+                  </div>
+                )}
+
+                <div className="table-responsive desktop-texts-table">
+                  <table className="table table-hover align-middle mb-0 texts-table">
+                    <thead className="table-light">
+                      <tr>
+                        <th
+                          aria-sort={
+                            textSort === "text"
+                              ? textSortDirection === "asc"
+                                ? "ascending"
+                                : "descending"
+                              : "none"
+                          }
+                        >
+                          <button
+                            className="sort-header-button"
+                            type="button"
+                            onClick={() => changeTextSort("text")}
+                          >
+                            Text
+                            {textSort === "text" && (
+                              <i
+                                className={`bi ${
+                                  textSortDirection === "asc"
+                                    ? "bi-caret-up-fill"
+                                    : "bi-caret-down-fill"
+                                }`}
+                              />
+                            )}
+                          </button>
+                        </th>
+                        <th>Description</th>
+                        <th>Scripture Reference</th>
+                        <th
+                          className="text-center"
+                          aria-sort={
+                            textSort === "timesUsed"
+                              ? textSortDirection === "asc"
+                                ? "ascending"
+                                : "descending"
+                              : "none"
+                          }
+                        >
+                          <button
+                            className="sort-header-button justify-content-center"
+                            type="button"
+                            onClick={() => changeTextSort("timesUsed")}
+                          >
+                            Times Used
+                            {textSort === "timesUsed" && (
+                              <i
+                                className={`bi ${
+                                  textSortDirection === "asc"
+                                    ? "bi-caret-up-fill"
+                                    : "bi-caret-down-fill"
+                                }`}
+                              />
+                            )}
+                          </button>
+                        </th>
+                        <th
+                          aria-sort={
+                            textSort === "lastUsed"
+                              ? textSortDirection === "asc"
+                                ? "ascending"
+                                : "descending"
+                              : "none"
+                          }
+                        >
+                          <button
+                            className="sort-header-button"
+                            type="button"
+                            onClick={() => changeTextSort("lastUsed")}
+                          >
+                            Last Used
+                            {textSort === "lastUsed" && (
+                              <i
+                                className={`bi ${
+                                  textSortDirection === "asc"
+                                    ? "bi-caret-up-fill"
+                                    : "bi-caret-down-fill"
+                                }`}
+                              />
+                            )}
+                          </button>
+                        </th>
+                        <th>Notes</th>
+                        <th className="text-center">PDFs</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleTexts.map((record) => (
+                        <tr
+                          className="service-row"
+                          key={record.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => openTextEditor(record)}
+                          onKeyDown={(event) =>
+                            (event.key === "Enter" || event.key === " ") &&
+                            openTextEditor(record)
+                          }
+                        >
+                          <td className="fw-semibold text-name-cell">
+                            {record.text}
+                          </td>
+                          <td className="text-description-cell">
+                            {record.description}
+                          </td>
+                          <td>{record.scriptureReference}</td>
+                          <td className="text-center">{record.timesUsed}</td>
+                          <td>{record.lastUsed}</td>
+                          <td className="note-cell">{record.notes}</td>
+                          <td className="text-center">
+                            {record.attachmentCount ? (
+                              <span className="badge text-bg-light border">
+                                <i className="bi bi-file-earmark-pdf me-1" />
+                                {record.attachmentCount}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="list-group list-group-flush mobile-text-list">
+                  {visibleTexts.map((record) => (
+                    <button
+                      type="button"
+                      className="list-group-item list-group-item-action p-3 text-start"
+                      key={record.id}
+                      onClick={() => openTextEditor(record)}
+                    >
+                      <strong className="d-block">{record.text}</strong>
+                      {record.description && (
+                        <span className="d-block text-body-secondary mt-1">
+                          {record.description}
+                        </span>
+                      )}
+                      {record.scriptureReference && (
+                        <span className="badge text-bg-light border mt-2">
+                          {record.scriptureReference}
+                        </span>
+                      )}
+                      <small className="d-block text-body-secondary mt-2">
+                        {record.timesUsed} Times Used · Last Used {record.lastUsed}
+                        {record.attachmentCount
+                          ? ` · ${record.attachmentCount} PDFs`
+                          : ""}
+                      </small>
+                    </button>
+                  ))}
+                </div>
+
+                {!visibleTexts.length && (
+                  <div className="card-body text-center text-body-secondary py-5">
+                    <i className="bi bi-journal-text fs-2 d-block mb-2" />
+                    No Texts Match Your Search.
                   </div>
                 )}
               </div>
@@ -1844,6 +2411,228 @@ export default function Home() {
         </div>
       )}
 
+      {textEditor && (
+        <div
+          className="modal fade show d-block service-edit-modal"
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="text-editor-title"
+        >
+          <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div className="modal-content card card-primary card-outline mb-0">
+              <div className="modal-header">
+                <div>
+                  <small className="text-uppercase text-body-secondary">
+                    Reusable Text Record
+                  </small>
+                  <h5 className="modal-title" id="text-editor-title">
+                    {textEditor === "new" ? "Add Text" : "Edit Text"}
+                  </h5>
+                </div>
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Close Text Editor"
+                  onClick={() => setTextEditor(null)}
+                />
+              </div>
+              <form
+                key={textEditor === "new" ? "new" : textEditor.id}
+                onSubmit={saveText}
+              >
+                <div className="modal-body">
+                  {textError && (
+                    <div className="alert alert-danger" role="alert">
+                      <i className="bi bi-exclamation-triangle-fill me-2" />
+                      {textError}
+                    </div>
+                  )}
+                  <div className="row g-3">
+                    <div className="col-12">
+                      <label className="form-label" htmlFor="text-text">
+                        Text
+                      </label>
+                      <input
+                        className="form-control"
+                        id="text-text"
+                        name="textText"
+                        defaultValue={textEditor === "new" ? "" : textEditor.text}
+                        placeholder="Text Name"
+                        required
+                      />
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label" htmlFor="text-description">
+                        Description
+                      </label>
+                      <input
+                        className="form-control"
+                        id="text-description"
+                        name="textDescription"
+                        defaultValue={
+                          textEditor === "new" ? "" : textEditor.description
+                        }
+                        placeholder="Description Of This Text"
+                      />
+                    </div>
+                    <div className="col-12">
+                      <label
+                        className="form-label"
+                        htmlFor="text-scripture-reference"
+                      >
+                        Scripture Reference
+                      </label>
+                      <textarea
+                        className="form-control"
+                        id="text-scripture-reference"
+                        name="textScriptureReference"
+                        rows={3}
+                        defaultValue={
+                          textEditor === "new"
+                            ? ""
+                            : textEditor.scriptureReference
+                        }
+                        placeholder="For Example, John 3:16"
+                      />
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label" htmlFor="text-notes">
+                        Notes
+                      </label>
+                      <textarea
+                        className="form-control"
+                        id="text-notes"
+                        name="textNotes"
+                        rows={3}
+                        defaultValue={textEditor === "new" ? "" : textEditor.notes}
+                        placeholder="Notes About This Text"
+                      />
+                    </div>
+                    {textEditor !== "new" && (
+                      <div className="col-12">
+                        <div className="card bg-body-tertiary border-0 mb-0">
+                          <div className="card-body d-flex flex-wrap gap-4 py-3">
+                            <span>
+                              <strong>{textEditor.timesUsed}</strong>
+                              <span className="text-body-secondary ms-2">
+                                Times Used
+                              </span>
+                            </span>
+                            <span>
+                              <strong>{textEditor.lastUsed}</strong>
+                              <span className="text-body-secondary ms-2">
+                                Last Used
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div className="col-12">
+                      <div className="card border mb-0">
+                        <div className="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+                          <div>
+                            <h6 className="mb-0">
+                              <i className="bi bi-file-earmark-pdf me-2" />
+                              Private PDF Attachments
+                            </h6>
+                            <small className="text-body-secondary">
+                              Add More Than One PDF To This Text.
+                            </small>
+                          </div>
+                          {textEditor !== "new" && (
+                            <label
+                              className={`btn btn-outline-primary btn-sm mb-0 ${
+                                pdfUploading ? "disabled" : ""
+                              }`}
+                            >
+                              <i className="bi bi-plus-lg me-1" />
+                              {pdfUploading ? "Adding PDFs..." : "Add PDFs"}
+                              <input
+                                className="visually-hidden"
+                                type="file"
+                                accept="application/pdf,.pdf"
+                                multiple
+                                disabled={pdfUploading}
+                                onChange={uploadTextPdfs}
+                              />
+                            </label>
+                          )}
+                        </div>
+                        <div className="list-group list-group-flush">
+                          {textEditor === "new" ? (
+                            <div className="list-group-item text-body-secondary py-3">
+                              Save The Text Before Adding PDFs.
+                            </div>
+                          ) : textAttachments.length ? (
+                            textAttachments.map((attachment) => (
+                              <div
+                                className="list-group-item d-flex flex-wrap align-items-center justify-content-between gap-2"
+                                key={attachment.id}
+                              >
+                                <div className="min-width-0">
+                                  <strong className="d-block text-truncate">
+                                    {attachment.original_file_name}
+                                  </strong>
+                                  <small className="text-body-secondary">
+                                    {formatFileSize(attachment.byte_size)}
+                                  </small>
+                                </div>
+                                <div className="btn-group btn-group-sm" role="group">
+                                  <a
+                                    className="btn btn-outline-primary"
+                                    href={`${textAttachmentsApiUrl()}?fileId=${encodeURIComponent(attachment.id)}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    Open
+                                  </a>
+                                  <a
+                                    className="btn btn-outline-secondary"
+                                    href={`${textAttachmentsApiUrl()}?fileId=${encodeURIComponent(attachment.id)}&download=1`}
+                                  >
+                                    Download
+                                  </a>
+                                  <button
+                                    className="btn btn-outline-danger"
+                                    type="button"
+                                    onClick={() => removeTextAttachment(attachment)}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="list-group-item text-body-secondary py-3">
+                              No PDFs Attached Yet.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary"
+                    onClick={() => setTextEditor(null)}
+                  >
+                    Close
+                  </button>
+                  <button className="btn btn-primary" type="submit">
+                    <i className="bi bi-check-lg me-1" />
+                    Save Text
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
       <datalist id="songs-list">
         {songs.map((song) => (
           <option key={song.id} value={song.title}>
@@ -1852,7 +2641,13 @@ export default function Home() {
         ))}
       </datalist>
       <datalist id="people-list" />
-      <datalist id="texts-list" />
+      <datalist id="texts-list">
+        {texts.map((record) => (
+          <option key={record.id} value={record.text}>
+            {record.description}
+          </option>
+        ))}
+      </datalist>
       <datalist id="vorraden-list" />
     </div>
   );

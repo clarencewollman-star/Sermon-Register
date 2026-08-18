@@ -168,6 +168,46 @@ button.nav-link {
   width: 22%;
 }
 
+.texts-table {
+  min-width: 900px;
+  table-layout: fixed;
+}
+
+.texts-table th:nth-child(1) {
+  width: 18%;
+}
+
+.texts-table th:nth-child(2) {
+  width: 27%;
+}
+
+.texts-table th:nth-child(3) {
+  width: 15%;
+}
+
+.texts-table th:nth-child(4) {
+  width: 9%;
+}
+
+.texts-table th:nth-child(5) {
+  width: 13%;
+}
+
+.texts-table th:nth-child(6) {
+  width: 12%;
+}
+
+.texts-table th:nth-child(7) {
+  width: 6%;
+}
+
+.texts-table .text-name-cell,
+.texts-table .text-description-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sort-header-button {
   display: flex;
   width: 100%;
@@ -235,6 +275,29 @@ button.nav-link {
   cursor: pointer;
 }
 
+.register-record-link {
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  color: var(--bs-link-color);
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-overflow: ellipsis;
+  transition: text-decoration-color 0.15s ease;
+}
+
+.register-record-link:hover,
+.register-record-link:focus-visible {
+  text-decoration-color: currentColor;
+}
+
+.register-record-link.small-link {
+  display: inline;
+  font-size: inherit;
+  vertical-align: baseline;
+}
+
 .service-date small {
   display: block;
   color: var(--bs-secondary-color);
@@ -250,6 +313,7 @@ button.nav-link {
 
 .mobile-service-list,
 .mobile-song-list,
+.mobile-text-list,
 .mobile-tabbar {
   display: none;
 }
@@ -379,8 +443,13 @@ button.nav-link {
     display: none;
   }
 
+  .desktop-texts-table {
+    display: none;
+  }
+
   .mobile-service-list,
-  .mobile-song-list {
+  .mobile-song-list,
+  .mobile-text-list {
     display: flex;
   }
 

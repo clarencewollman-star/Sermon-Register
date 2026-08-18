@@ -1,3 +1,6 @@
+import base64
+import binascii
+import hashlib
 import json
 import os
 import sqlite3
@@ -5,16 +8,20 @@ import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(
     os.environ.get("SERMON_DB_PATH", ROOT / "data" / "sermon-register.db")
 )
+UPLOADS_PATH = Path(
+    os.environ.get("SERMON_UPLOADS_PATH", DB_PATH.parent / "uploads")
+)
 SCHEMA_PATH = ROOT / "database" / "schema.sql"
 APP_ORIGIN = os.environ.get("APP_ORIGIN", "http://localhost:3000")
 API_HOST = os.environ.get("API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("API_PORT", "3001"))
+MAX_PDF_BYTES = 25 * 1024 * 1024
 
 
 SERVICES_V2_SQL = """
@@ -57,6 +64,18 @@ CREATE TABLE songs_v2 (
 )
 """
 
+TEXTS_V2_SQL = """
+CREATE TABLE texts_v2 (
+  id TEXT PRIMARY KEY,
+  text TEXT NOT NULL COLLATE NOCASE,
+  description TEXT,
+  scripture_reference TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)
+"""
+
 
 def now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -80,7 +99,25 @@ def schema_backup(database_path, connection):
 
 
 def ensure_schema(connection, database_path=DB_PATH):
-    connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
+    existing_text_table = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'texts'"
+    ).fetchone()
+    existing_text_columns = (
+        {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(texts)")
+        }
+        if existing_text_table
+        else set()
+    )
+    bootstrap_schema = schema_sql
+    if existing_text_table and "text" not in existing_text_columns:
+        bootstrap_schema = bootstrap_schema.replace(
+            "CREATE INDEX IF NOT EXISTS texts_text_idx ON texts(text COLLATE NOCASE);",
+            "",
+        )
+    connection.executescript(bootstrap_schema)
     columns = {
         row["name"]: row for row in connection.execute("PRAGMA table_info(services)")
     }
@@ -170,7 +207,36 @@ def ensure_schema(connection, database_path=DB_PATH):
         finally:
             connection.execute("PRAGMA foreign_keys = ON")
 
-    connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    text_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(texts)")
+    }
+    if "title" in text_columns or "description" not in text_columns:
+        if not backup_path:
+            backup_path = schema_backup(database_path, connection)
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(TEXTS_V2_SQL)
+            connection.execute(
+                """INSERT INTO texts_v2
+                   (id, text, description, scripture_reference, notes,
+                    created_at, updated_at)
+                   SELECT id, title, text_information, scripture_reference, notes,
+                          created_at, updated_at
+                     FROM texts"""
+            )
+            connection.execute("DROP TABLE texts")
+            connection.execute("ALTER TABLE texts_v2 RENAME TO texts")
+            connection.execute("PRAGMA user_version = 5")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+
+    connection.executescript(schema_sql)
     violations = connection.execute("PRAGMA foreign_key_check").fetchall()
     if violations:
         raise RuntimeError(f"Schema migration created foreign key errors: {violations}")
@@ -179,6 +245,7 @@ def ensure_schema(connection, database_path=DB_PATH):
 
 def initialize_database():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    UPLOADS_PATH.mkdir(parents=True, exist_ok=True)
     with connect() as con:
         ensure_schema(con, DB_PATH)
         backfill_gebet_links(con)
@@ -235,6 +302,44 @@ def song_rows(con):
   ORDER BY songs.title COLLATE NOCASE
     """
     return [dict(row) for row in con.execute(sql)]
+
+
+def text_rows(con):
+    sql = """
+    SELECT texts.id, texts.text, texts.description,
+           texts.scripture_reference, texts.notes,
+           COUNT(DISTINCT services.id) AS times_used,
+           MAX(services.service_date) AS last_used,
+           COUNT(DISTINCT attachments.id) AS attachment_count
+      FROM texts
+ LEFT JOIN services ON services.text_id = texts.id
+ LEFT JOIN text_attachments attachments ON attachments.text_id = texts.id
+  GROUP BY texts.id, texts.text, texts.description,
+           texts.scripture_reference, texts.notes
+  ORDER BY texts.text COLLATE NOCASE
+    """
+    return [dict(row) for row in con.execute(sql)]
+
+
+def text_attachment_rows(con, text_id):
+    return [
+        dict(row)
+        for row in con.execute(
+            """SELECT id, text_id, original_file_name, byte_size, created_at
+                 FROM text_attachments
+                WHERE text_id = ?
+                ORDER BY created_at DESC""",
+            (text_id,),
+        )
+    ]
+
+
+def attachment_path(storage_key):
+    root = UPLOADS_PATH.resolve()
+    candidate = (UPLOADS_PATH / storage_key).resolve()
+    if os.path.commonpath((str(root), str(candidate))) != str(root):
+        raise ValueError("Invalid attachment storage path")
+    return candidate
 
 
 def matching_lehr_id(con, gebet_date, text_id, gebet_id=None):
@@ -372,13 +477,13 @@ def service_rows(con):
     SELECT s.id, s.service_date, s.service_type, s.notes, s.lehr_status,
            COALESCE(songs.title, '') AS song,
            COALESCE(song_person.name, '') AS song_by,
-           texts.title AS text_title,
+           texts.text AS text_title,
            COALESCE(text_person.name, '') AS text_by,
            vorraden.title AS vorrade,
            vorrade_person.name AS vorrade_by,
            continuation.lehr_service_id AS linked_lehr_id,
            linked_lehr.service_date AS linked_lehr_date,
-           linked_text.title AS linked_lehr_text,
+           linked_text.text AS linked_lehr_text,
            continuation.lehr_status_after AS linked_lehr_status,
            linked_lehr.lehr_status AS linked_lehr_current_status
       FROM services s
@@ -499,19 +604,209 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.json({"error": str(exc)}, 500)
 
+    def create_text(self):
+        try:
+            body = self.body()
+            text = str(body.get("text", "")).strip()
+            if not text:
+                return self.json({"error": "Text is required"}, 400)
+            with connect() as con:
+                existing = con.execute(
+                    "SELECT id FROM texts WHERE text = ? COLLATE NOCASE", (text,)
+                ).fetchone()
+                if existing:
+                    return self.json({"error": "This Text already exists"}, 409)
+                text_id = str(uuid.uuid4())
+                stamp = now()
+                con.execute(
+                    """INSERT INTO texts
+                       (id, text, description, scripture_reference, notes,
+                        created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        text_id,
+                        text,
+                        str(body.get("description", "")).strip() or None,
+                        str(body.get("scriptureReference", "")).strip() or None,
+                        str(body.get("notes", "")).strip() or None,
+                        stamp,
+                        stamp,
+                    ),
+                )
+                con.commit()
+                record = next(row for row in text_rows(con) if row["id"] == text_id)
+                self.json(record, 201)
+        except Exception as exc:
+            self.json({"error": str(exc)}, 500)
+
+    def update_text(self):
+        try:
+            body = self.body()
+            text_id = str(body.get("id", "")).strip()
+            text = str(body.get("text", "")).strip()
+            if not text_id or not text:
+                return self.json({"error": "Text record and Text are required"}, 400)
+            with connect() as con:
+                existing = con.execute(
+                    "SELECT id FROM texts WHERE id = ?", (text_id,)
+                ).fetchone()
+                if not existing:
+                    return self.json({"error": "Text not found"}, 404)
+                duplicate = con.execute(
+                    """SELECT id FROM texts
+                        WHERE text = ? COLLATE NOCASE AND id <> ?""",
+                    (text, text_id),
+                ).fetchone()
+                if duplicate:
+                    return self.json({"error": "This Text already exists"}, 409)
+                con.execute(
+                    """UPDATE texts
+                          SET text = ?, description = ?, scripture_reference = ?,
+                              notes = ?, updated_at = ?
+                        WHERE id = ?""",
+                    (
+                        text,
+                        str(body.get("description", "")).strip() or None,
+                        str(body.get("scriptureReference", "")).strip() or None,
+                        str(body.get("notes", "")).strip() or None,
+                        now(),
+                        text_id,
+                    ),
+                )
+                con.commit()
+                record = next(row for row in text_rows(con) if row["id"] == text_id)
+                self.json(record)
+        except Exception as exc:
+            self.json({"error": str(exc)}, 500)
+
+    def create_text_attachment(self):
+        final_path = None
+        try:
+            body = self.body()
+            text_id = str(body.get("textId", "")).strip()
+            file_name = str(body.get("fileName", "")).strip()
+            mime_type = str(body.get("mimeType", "")).strip().lower()
+            encoded_data = str(body.get("data", "")).strip()
+            if not text_id or not file_name or not encoded_data:
+                return self.json({"error": "Text and PDF file are required"}, 400)
+            if mime_type not in ("application/pdf", ""):
+                return self.json({"error": "Only PDF files can be attached"}, 400)
+            try:
+                file_data = base64.b64decode(encoded_data, validate=True)
+            except (binascii.Error, ValueError):
+                return self.json({"error": "The PDF data is invalid"}, 400)
+            if len(file_data) > MAX_PDF_BYTES:
+                return self.json({"error": "PDF files must be 25 MB or smaller"}, 413)
+            if not file_data.startswith(b"%PDF-"):
+                return self.json({"error": "The selected file is not a valid PDF"}, 400)
+
+            with connect() as con:
+                owner = con.execute(
+                    "SELECT id FROM texts WHERE id = ?", (text_id,)
+                ).fetchone()
+                if not owner:
+                    return self.json({"error": "Text not found"}, 404)
+                attachment_id = str(uuid.uuid4())
+                storage_key = f"texts/{text_id}/{attachment_id}.pdf"
+                final_path = attachment_path(storage_key)
+                final_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary_path = final_path.with_suffix(".tmp")
+                with temporary_path.open("xb") as file_handle:
+                    file_handle.write(file_data)
+                os.replace(temporary_path, final_path)
+                con.execute(
+                    """INSERT INTO text_attachments
+                       (id, text_id, original_file_name, storage_key, mime_type,
+                        byte_size, sha256, created_at)
+                       VALUES (?, ?, ?, ?, 'application/pdf', ?, ?, ?)""",
+                    (
+                        attachment_id,
+                        text_id,
+                        Path(file_name).name,
+                        storage_key,
+                        len(file_data),
+                        hashlib.sha256(file_data).hexdigest(),
+                        now(),
+                    ),
+                )
+                con.commit()
+                record = next(
+                    row
+                    for row in text_attachment_rows(con, text_id)
+                    if row["id"] == attachment_id
+                )
+                self.json(record, 201)
+        except Exception as exc:
+            if final_path:
+                final_path.unlink(missing_ok=True)
+            self.json({"error": str(exc)}, 500)
+
+    def send_text_attachment(self, attachment_id, download=False):
+        with connect() as con:
+            attachment = con.execute(
+                """SELECT original_file_name, storage_key, byte_size
+                     FROM text_attachments WHERE id = ?""",
+                (attachment_id,),
+            ).fetchone()
+        if not attachment:
+            return self.json({"error": "PDF attachment not found"}, 404)
+        try:
+            file_path = attachment_path(attachment["storage_key"])
+            file_data = file_path.read_bytes()
+        except (OSError, ValueError):
+            return self.json({"error": "The PDF file could not be read"}, 404)
+        safe_name = (
+            attachment["original_file_name"]
+            .replace('"', "")
+            .replace("\r", "")
+            .replace("\n", "")
+        )
+        disposition = "attachment" if download else "inline"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Length", str(len(file_data)))
+        self.send_header("Content-Disposition", f'{disposition}; filename="{safe_name}"')
+        self.send_header("Access-Control-Allow-Origin", self.allowed_origin())
+        self.send_header("Vary", "Origin")
+        self.end_headers()
+        self.wfile.write(file_data)
+
     def do_GET(self):
-        if self.path == "/songs":
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path == "/songs":
             with connect() as con:
                 return self.json(song_rows(con))
-        if self.path != "/services":
+        if path == "/texts":
+            with connect() as con:
+                return self.json(text_rows(con))
+        if path == "/text-attachments":
+            parameters = parse_qs(parsed.query)
+            attachment_id = str(parameters.get("fileId", [""])[0]).strip()
+            if attachment_id:
+                return self.send_text_attachment(
+                    attachment_id,
+                    str(parameters.get("download", [""])[0]) == "1",
+                )
+            text_id = str(parameters.get("textId", [""])[0]).strip()
+            if not text_id:
+                return self.json({"error": "Text id is required"}, 400)
+            with connect() as con:
+                return self.json(text_attachment_rows(con, text_id))
+        if path != "/services":
             return self.json({"error": "Not found"}, 404)
         with connect() as con:
             self.json(service_rows(con))
 
     def do_POST(self):
-        if self.path == "/songs":
+        path = urlparse(self.path).path
+        if path == "/songs":
             return self.create_song()
-        if self.path != "/services":
+        if path == "/texts":
+            return self.create_text()
+        if path == "/text-attachments":
+            return self.create_text_attachment()
+        if path != "/services":
             return self.json({"error": "Not found"}, 404)
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -527,7 +822,7 @@ class Handler(BaseHTTPRequestHandler):
                 song_by = optional_master_id(
                     con, "people", "name", body.get("songBy")
                 )
-                text_id = master_id(con, "texts", "title", body["text"].strip())
+                text_id = master_id(con, "texts", "text", body["text"].strip())
                 text_by = optional_master_id(
                     con, "people", "name", body.get("textBy")
                 )
@@ -582,9 +877,12 @@ class Handler(BaseHTTPRequestHandler):
             self.json({"error": str(exc)}, 500)
 
     def do_PUT(self):
-        if self.path == "/songs":
+        path = urlparse(self.path).path
+        if path == "/songs":
             return self.update_song()
-        if self.path != "/services":
+        if path == "/texts":
+            return self.update_text()
+        if path != "/services":
             return self.json({"error": "Not found"}, 404)
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -606,7 +904,7 @@ class Handler(BaseHTTPRequestHandler):
                 song_by = optional_master_id(
                     con, "people", "name", body.get("songBy")
                 )
-                text_id = master_id(con, "texts", "title", body["text"].strip())
+                text_id = master_id(con, "texts", "text", body["text"].strip())
                 text_by = optional_master_id(
                     con, "people", "name", body.get("textBy")
                 )
@@ -692,7 +990,29 @@ class Handler(BaseHTTPRequestHandler):
             self.json({"error": str(exc)}, 500)
 
     def do_DELETE(self):
-        if self.path != "/services":
+        path = urlparse(self.path).path
+        if path == "/text-attachments":
+            try:
+                body = self.body()
+                attachment_id = str(body.get("id", "")).strip()
+                if not attachment_id:
+                    return self.json({"error": "PDF attachment id is required"}, 400)
+                with connect() as con:
+                    attachment = con.execute(
+                        "SELECT storage_key FROM text_attachments WHERE id = ?",
+                        (attachment_id,),
+                    ).fetchone()
+                    if not attachment:
+                        return self.json({"error": "PDF attachment not found"}, 404)
+                    con.execute(
+                        "DELETE FROM text_attachments WHERE id = ?", (attachment_id,)
+                    )
+                    con.commit()
+                attachment_path(attachment["storage_key"]).unlink(missing_ok=True)
+                return self.json({"id": attachment_id})
+            except Exception as exc:
+                return self.json({"error": str(exc)}, 500)
+        if path != "/services":
             return self.json({"error": "Not found"}, 404)
         try:
             length = int(self.headers.get("Content-Length", "0"))
