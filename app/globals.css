@@ -202,7 +202,8 @@ button.nav-link {
 }
 
 .texts-table .text-name-cell,
-.texts-table .text-description-cell {
+.texts-table .text-description-cell,
+.texts-table .scripture-reference-cell {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

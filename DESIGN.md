@@ -119,11 +119,12 @@ Songs are selected and displayed by Title. Any song number is entered as part of
 | `text` | text | required; case-insensitive reusable name |
 | `description` | text | nullable |
 | `scripture_reference` | text | nullable |
+| `songs_for_text` | text | nullable plain text; not linked to `songs` |
 | `notes` | text | nullable |
 | `created_at` | text | required |
 | `updated_at` | text | required |
 
-A Text is reusable and does not contain service dates or completion state. The Texts view shows Text, Description, Scripture Reference, Times Used, Last Used, Notes, and PDF count; usage values are derived from linked services. The view can be sorted by Text, Times Used, or Last Used in either direction.
+A Text is reusable and does not contain service dates or completion state. `songs_for_text` is displayed as **Songs For This Sermon**; it is an intentionally unstructured text box and does not create Song relationships. The Texts view shows Text, Description, the first line of Scripture Reference, Times Used, Last Used, Notes, and PDF count; usage values are derived from linked services. The view can be sorted by Text, Times Used, or Last Used in either direction.
 
 ### `vorraden`
 

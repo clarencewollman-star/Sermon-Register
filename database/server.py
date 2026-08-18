@@ -70,6 +70,7 @@ CREATE TABLE texts_v2 (
   text TEXT NOT NULL COLLATE NOCASE,
   description TEXT,
   scripture_reference TEXT,
+  songs_for_text TEXT,
   notes TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -220,21 +221,31 @@ def ensure_schema(connection, database_path=DB_PATH):
             connection.execute(TEXTS_V2_SQL)
             connection.execute(
                 """INSERT INTO texts_v2
-                   (id, text, description, scripture_reference, notes,
+                   (id, text, description, scripture_reference, songs_for_text, notes,
                     created_at, updated_at)
-                   SELECT id, title, text_information, scripture_reference, notes,
+                   SELECT id, title, text_information, scripture_reference, NULL, notes,
                           created_at, updated_at
                      FROM texts"""
             )
             connection.execute("DROP TABLE texts")
             connection.execute("ALTER TABLE texts_v2 RENAME TO texts")
-            connection.execute("PRAGMA user_version = 5")
+            connection.execute("PRAGMA user_version = 6")
             connection.commit()
         except Exception:
             connection.rollback()
             raise
         finally:
             connection.execute("PRAGMA foreign_keys = ON")
+
+    text_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(texts)")
+    }
+    if "songs_for_text" not in text_columns:
+        if not backup_path:
+            backup_path = schema_backup(database_path, connection)
+        connection.execute("ALTER TABLE texts ADD COLUMN songs_for_text TEXT")
+        connection.execute("PRAGMA user_version = 6")
+        connection.commit()
 
     connection.executescript(schema_sql)
     violations = connection.execute("PRAGMA foreign_key_check").fetchall()
@@ -307,7 +318,7 @@ def song_rows(con):
 def text_rows(con):
     sql = """
     SELECT texts.id, texts.text, texts.description,
-           texts.scripture_reference, texts.notes,
+           texts.scripture_reference, texts.songs_for_text, texts.notes,
            COUNT(DISTINCT services.id) AS times_used,
            MAX(services.service_date) AS last_used,
            COUNT(DISTINCT attachments.id) AS attachment_count
@@ -315,7 +326,7 @@ def text_rows(con):
  LEFT JOIN services ON services.text_id = texts.id
  LEFT JOIN text_attachments attachments ON attachments.text_id = texts.id
   GROUP BY texts.id, texts.text, texts.description,
-           texts.scripture_reference, texts.notes
+           texts.scripture_reference, texts.songs_for_text, texts.notes
   ORDER BY texts.text COLLATE NOCASE
     """
     return [dict(row) for row in con.execute(sql)]
@@ -620,15 +631,16 @@ class Handler(BaseHTTPRequestHandler):
                 stamp = now()
                 con.execute(
                     """INSERT INTO texts
-                       (id, text, description, scripture_reference, notes,
-                        created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                       (id, text, description, scripture_reference, songs_for_text,
+                        notes, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         text_id,
                         text,
-                        str(body.get("description", "")).strip() or None,
-                        str(body.get("scriptureReference", "")).strip() or None,
-                        str(body.get("notes", "")).strip() or None,
+                        str(body.get("description") or "").strip() or None,
+                        str(body.get("scriptureReference") or "").strip() or None,
+                        str(body.get("songsForText") or "").strip() or None,
+                        str(body.get("notes") or "").strip() or None,
                         stamp,
                         stamp,
                     ),
@@ -662,13 +674,14 @@ class Handler(BaseHTTPRequestHandler):
                 con.execute(
                     """UPDATE texts
                           SET text = ?, description = ?, scripture_reference = ?,
-                              notes = ?, updated_at = ?
+                              songs_for_text = ?, notes = ?, updated_at = ?
                         WHERE id = ?""",
                     (
                         text,
-                        str(body.get("description", "")).strip() or None,
-                        str(body.get("scriptureReference", "")).strip() or None,
-                        str(body.get("notes", "")).strip() or None,
+                        str(body.get("description") or "").strip() or None,
+                        str(body.get("scriptureReference") or "").strip() or None,
+                        str(body.get("songsForText") or "").strip() or None,
+                        str(body.get("notes") or "").strip() or None,
                         now(),
                         text_id,
                     ),

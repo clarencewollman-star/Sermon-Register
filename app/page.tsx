@@ -67,6 +67,7 @@ type TextRecord = {
   text: string;
   description: string;
   scriptureReference: string;
+  songsForText: string;
   notes: string;
   timesUsed: number;
   lastUsedValue: string;
@@ -79,6 +80,7 @@ type ApiTextRecord = {
   text: string;
   description: string | null;
   scripture_reference: string | null;
+  songs_for_text: string | null;
   notes: string | null;
   times_used: number;
   last_used: string | null;
@@ -183,6 +185,7 @@ const textFromApi = (row: ApiTextRecord): TextRecord => ({
   text: row.text,
   description: row.description || "",
   scriptureReference: row.scripture_reference || "",
+  songsForText: row.songs_for_text || "",
   notes: row.notes || "",
   timesUsed: Number(row.times_used || 0),
   lastUsedValue: row.last_used || "",
@@ -200,6 +203,10 @@ function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function firstLine(value: string) {
+  return value.split(/\r?\n/, 1)[0].trim();
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer) {
@@ -348,7 +355,7 @@ export default function Home() {
   const visibleTexts = useMemo(
     () => {
       const filteredTexts = texts.filter((record) =>
-        `${record.text} ${record.description} ${record.scriptureReference} ${record.notes}`
+        `${record.text} ${record.description} ${record.scriptureReference} ${record.songsForText} ${record.notes}`
           .toLowerCase()
           .includes(textQuery.toLowerCase()),
       );
@@ -568,6 +575,7 @@ export default function Home() {
           text,
           description: String(form.get("textDescription") || ""),
           scriptureReference: String(form.get("textScriptureReference") || ""),
+          songsForText: String(form.get("textSongsForText") || ""),
           notes: String(form.get("textNotes") || ""),
         }),
       });
@@ -1460,7 +1468,9 @@ export default function Home() {
                           <td className="text-description-cell">
                             {record.description}
                           </td>
-                          <td>{record.scriptureReference}</td>
+                          <td className="scripture-reference-cell">
+                            {firstLine(record.scriptureReference)}
+                          </td>
                           <td className="text-center">{record.timesUsed}</td>
                           <td>{record.lastUsed}</td>
                           <td className="note-cell">{record.notes}</td>
@@ -1496,7 +1506,7 @@ export default function Home() {
                       )}
                       {record.scriptureReference && (
                         <span className="badge text-bg-light border mt-2">
-                          {record.scriptureReference}
+                          {firstLine(record.scriptureReference)}
                         </span>
                       )}
                       <small className="d-block text-body-secondary mt-2">
@@ -2494,6 +2504,24 @@ export default function Home() {
                             : textEditor.scriptureReference
                         }
                         placeholder="For Example, John 3:16"
+                      />
+                    </div>
+                    <div className="col-12">
+                      <label
+                        className="form-label"
+                        htmlFor="text-songs-for-text"
+                      >
+                        Songs For This Sermon
+                      </label>
+                      <textarea
+                        className="form-control"
+                        id="text-songs-for-text"
+                        name="textSongsForText"
+                        rows={3}
+                        defaultValue={
+                          textEditor === "new" ? "" : textEditor.songsForText
+                        }
+                        placeholder="Songs For This Sermon"
                       />
                     </div>
                     <div className="col-12">
