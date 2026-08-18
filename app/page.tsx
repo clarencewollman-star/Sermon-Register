@@ -17,6 +17,10 @@ type Service = {
   vorrade: string;
   vorradeBy: string;
   status: string;
+  linkedLehrId: string;
+  linkedLehrDate: string;
+  linkedLehrText: string;
+  linkedLehrCurrentStatus: string;
   notes: string;
 };
 
@@ -31,6 +35,11 @@ type ApiService = {
   vorrade: string | null;
   vorrade_by: string | null;
   lehr_status: "IN_PROGRESS" | "FINISHED" | null;
+  linked_lehr_id: string | null;
+  linked_lehr_date: string | null;
+  linked_lehr_text: string | null;
+  linked_lehr_status: "IN_PROGRESS" | "FINISHED" | null;
+  linked_lehr_current_status: "IN_PROGRESS" | "FINISHED" | null;
   notes: string | null;
 };
 
@@ -53,6 +62,7 @@ const blankDraft = () => ({
   textBy: "",
   vorrade: "",
   vorradeBy: "",
+  status: "",
   notes: "",
 });
 
@@ -60,6 +70,8 @@ const apiUrl = () => "/api/services";
 
 const fromApi = (row: ApiService): Service => {
   const date = new Date(`${row.service_date}T12:00:00`);
+  const status =
+    row.service_type === "LEHR" ? row.lehr_status : row.linked_lehr_status;
   return {
     id: row.id,
     dateValue: row.service_date,
@@ -77,10 +89,19 @@ const fromApi = (row: ApiService): Service => {
     vorrade: row.vorrade || "",
     vorradeBy: row.vorrade_by || "",
     status:
-      row.lehr_status === "IN_PROGRESS"
+      status === "IN_PROGRESS"
         ? "In Progress"
-        : row.lehr_status === "FINISHED"
+        : status === "FINISHED"
           ? "Finished"
+          : "",
+    linkedLehrId: row.linked_lehr_id || "",
+    linkedLehrDate: row.linked_lehr_date || "",
+    linkedLehrText: row.linked_lehr_text || "",
+    linkedLehrCurrentStatus:
+      row.linked_lehr_current_status === "FINISHED"
+        ? "Finished"
+        : row.linked_lehr_current_status === "IN_PROGRESS"
+          ? "In Progress"
           : "",
     notes: row.notes || "",
   };
@@ -160,7 +181,15 @@ export default function Home() {
     });
     const result = (await response.json()) as ApiService & { error?: string };
     if (!response.ok) throw new Error(result.error || "Could Not Save Service");
-    setItems((current) => [fromApi(result), ...current]);
+    const created = fromApi(result);
+    setItems((current) => [
+      created,
+      ...current.map((service) =>
+        created.type === "Gebet" && service.id === created.linkedLehrId
+          ? { ...service, status: created.linkedLehrCurrentStatus }
+          : service,
+      ),
+    ]);
   }
 
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
@@ -183,6 +212,7 @@ export default function Home() {
           vorrade: String(form.get("editVorrade") || ""),
           vorradeBy: String(form.get("editVorradeBy") || ""),
           status: String(form.get("editStatus") || ""),
+          linkedLehrStatus: String(form.get("editStatus") || ""),
           notes: String(form.get("editNotes") || ""),
         }),
       });
@@ -190,7 +220,13 @@ export default function Home() {
       if (!response.ok) throw new Error(result.error || "Could Not Update Service");
       const updated = fromApi(result);
       setItems((current) =>
-        current.map((service) => (service.id === updated.id ? updated : service)),
+        current.map((service) => {
+          if (service.id === updated.id) return updated;
+          if (updated.type === "Gebet" && service.id === updated.linkedLehrId) {
+            return { ...service, status: updated.linkedLehrCurrentStatus };
+          }
+          return service;
+        }),
       );
       setSelected(null);
     } catch (error) {
@@ -233,6 +269,8 @@ export default function Home() {
         textBy: String(form.get("textBy")),
         vorrade: String(form.get("vorrade") || ""),
         vorradeBy: String(form.get("vorradeBy") || ""),
+        status: String(form.get("status") || ""),
+        linkedLehrStatus: String(form.get("status") || ""),
         notes: String(form.get("notes") || ""),
       });
       setOpen(false);
@@ -259,6 +297,7 @@ export default function Home() {
         textBy: String(form.get("inlineTextBy") || ""),
         vorrade: String(form.get("inlineVorrade") || ""),
         vorradeBy: String(form.get("inlineVorradeBy") || ""),
+        status: String(form.get("inlineStatus") || ""),
         notes: String(form.get("inlineNotes") || ""),
       }),
     );
@@ -275,6 +314,7 @@ export default function Home() {
     const textBy = String(form.get("inlineTextBy") || "").trim();
     const vorrade = String(form.get("inlineVorrade") || "").trim();
     const vorradeBy = String(form.get("inlineVorradeBy") || "").trim();
+    const status = String(form.get("inlineStatus") || "").trim();
     const notes = String(form.get("inlineNotes") || "");
     if (!date || !type || !text) {
       setSaveError("Complete Date, Type, And Text.");
@@ -290,6 +330,7 @@ export default function Home() {
         textBy,
         vorrade,
         vorradeBy,
+        status,
         notes,
       });
       sessionStorage.removeItem("sermon-register-service-draft");
@@ -492,16 +533,17 @@ export default function Home() {
                   <table className="table table-hover align-middle mb-0 register-table">
                     <thead className="table-light">
                       <tr>
-                        <th>Date</th>
-                        <th>Type</th>
-                        <th className="content-column">Song</th>
+                        <th className="date-column">Date</th>
+                        <th className="type-column">Type</th>
+                        <th className="content-column song-column">Song</th>
                         <th className="person-column">Song By</th>
-                        <th className="content-column">Text</th>
+                        <th className="content-column text-column">Text</th>
                         <th className="person-column">Text By</th>
-                        <th className="content-column">Vorrade</th>
+                        <th className="content-column vorrade-column">Vorrade</th>
                         <th className="person-column">Vorrade By</th>
-                        <th>Notes</th>
-                        <th>Status</th>
+                        <th className="notes-column">Notes</th>
+                        <th className="status-column">Status</th>
+                        <th className="actions-column">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -510,7 +552,7 @@ export default function Home() {
                         key={rowVersion}
                         onInput={persistInlineDraft}
                       >
-                        <td>
+                        <td className="date-column">
                           <input
                             className="form-control form-control-sm"
                             form="inline-service-form"
@@ -520,7 +562,7 @@ export default function Home() {
                             aria-label="New Service Date"
                           />
                         </td>
-                        <td>
+                        <td className="type-column">
                           <select
                             className="form-select form-select-sm"
                             form="inline-service-form"
@@ -539,7 +581,7 @@ export default function Home() {
                             <option>Gebet</option>
                           </select>
                         </td>
-                        <td className="content-column">
+                        <td className="content-column song-column">
                           <input
                             className="form-control form-control-sm"
                             form="inline-service-form"
@@ -561,7 +603,7 @@ export default function Home() {
                             aria-label="New Service Song By"
                           />
                         </td>
-                        <td className="content-column">
+                        <td className="content-column text-column">
                           <input
                             className="form-control form-control-sm"
                             form="inline-service-form"
@@ -583,7 +625,7 @@ export default function Home() {
                             aria-label="New Service Text By"
                           />
                         </td>
-                        <td className="content-column">
+                        <td className="content-column vorrade-column">
                           {draft.type === "Lehr" ? (
                             <input
                               className="form-control form-control-sm"
@@ -613,7 +655,7 @@ export default function Home() {
                             <span className="text-body-secondary">—</span>
                           )}
                         </td>
-                        <td>
+                        <td className="notes-column">
                           <input
                             className="form-control form-control-sm"
                             form="inline-service-form"
@@ -623,7 +665,24 @@ export default function Home() {
                             aria-label="New Service Notes"
                           />
                         </td>
-                        <td>
+                        <td className="status-column">
+                          {draft.type === "Lehr" ? (
+                            <select
+                              className="form-select form-select-sm"
+                              form="inline-service-form"
+                              name="inlineStatus"
+                              defaultValue={draft.status}
+                              aria-label="New Lehr Status"
+                            >
+                              <option value="">No Status</option>
+                              <option value="IN_PROGRESS">In Progress</option>
+                              <option value="FINISHED">Finished</option>
+                            </select>
+                          ) : (
+                            <span className="text-body-secondary">—</span>
+                          )}
+                        </td>
+                        <td className="actions-column">
                           <span className="inline-entry-actions">
                             <button
                               form="inline-service-form"
@@ -655,31 +714,32 @@ export default function Home() {
                             openService(service)
                           }
                         >
-                          <td className="service-date">
+                          <td className="service-date date-column">
                             <strong>{service.date}</strong>
                             <small>{service.day}</small>
                           </td>
-                          <td>
+                          <td className="type-column">
                             <span
                               className={`badge ${service.type === "Lehr" ? "text-bg-primary" : "text-bg-warning"}`}
                             >
                               {service.type}
                             </span>
                           </td>
-                          <td>{service.song}</td>
+                          <td className="song-column">{service.song}</td>
                           <td className="person-column">{service.songBy}</td>
-                          <td className="fw-semibold">{service.text}</td>
+                          <td className="fw-semibold text-column">{service.text}</td>
                           <td className="person-column">{service.textBy}</td>
-                          <td>{service.vorrade}</td>
+                          <td className="vorrade-column">{service.vorrade}</td>
                           <td className="person-column">{service.vorradeBy}</td>
-                          <td className="note-cell">{service.notes}</td>
-                          <td>
+                          <td className="note-cell notes-column">{service.notes}</td>
+                          <td className="status-column">
                             {service.status && (
                               <span className="badge text-bg-secondary">
                                 {service.status}
                               </span>
                             )}
                           </td>
+                          <td className="actions-column" />
                         </tr>
                       ))}
                     </tbody>
@@ -766,14 +826,14 @@ export default function Home() {
             onClick={() => changeSection(item.label)}
           >
             <i className={`bi ${item.icon}`} />
-            {item.label}
+            <span>{item.label}</span>
           </button>
         ))}
       </nav>
 
       {open && (
         <div
-          className="modal fade show d-block"
+          className="modal fade show d-block service-form-modal"
           tabIndex={-1}
           role="dialog"
           aria-modal="true"
@@ -904,6 +964,49 @@ export default function Home() {
                             list="people-list"
                             placeholder="Type A New Person"
                           />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="service-status">
+                            Lehr Status
+                          </label>
+                          <select
+                            className="form-select"
+                            id="service-status"
+                            name="status"
+                            defaultValue=""
+                          >
+                            <option value="">No Status</option>
+                            <option value="IN_PROGRESS">In Progress</option>
+                            <option value="FINISHED">Finished</option>
+                          </select>
+                        </div>
+                      </>
+                    )}
+                    {kind === "Gebet" && (
+                      <>
+                        <div className="col-12">
+                          <div className="alert alert-info mb-0">
+                            <i className="bi bi-link-45deg me-2" />
+                            The Most Recent Earlier Lehr With The Same Text From
+                            The Previous Year Will Be Linked Automatically.
+                          </div>
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label" htmlFor="service-linked-status">
+                            Lehr Status
+                          </label>
+                          <select
+                            className="form-select"
+                            id="service-linked-status"
+                            name="status"
+                            defaultValue="IN_PROGRESS"
+                          >
+                            <option value="IN_PROGRESS">In Progress</option>
+                            <option value="FINISHED">Finished</option>
+                          </select>
+                          <div className="form-text">
+                            Choose Finished On The Gebet That Completes The Lehr.
+                          </div>
                         </div>
                       </>
                     )}
@@ -1103,6 +1206,55 @@ export default function Home() {
                               selected.vorradeBy === "—" ? "" : selected.vorradeBy
                             }
                           />
+                        </div>
+                      </>
+                    )}
+                    {editKind === "Gebet" && (
+                      <>
+                        <div className="col-12">
+                          <div className="form-label">Automatically Linked Lehr</div>
+                          {selected.linkedLehrId ? (
+                            <div className="card bg-body-tertiary border-0 mb-0">
+                              <div className="card-body py-2 px-3">
+                                <strong>{selected.linkedLehrText}</strong>
+                                <span className="text-body-secondary ms-2">
+                                  {selected.linkedLehrDate}
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="alert alert-warning mb-0">
+                              No Earlier Lehr With The Same Text Was Found Within
+                              The Previous Year.
+                            </div>
+                          )}
+                          <div className="form-text">
+                            The Match Is Updated Automatically When You Save.
+                          </div>
+                        </div>
+                        <div className="col-md-6">
+                          <label
+                            className="form-label"
+                            htmlFor="edit-service-linked-status"
+                          >
+                            Lehr Status
+                          </label>
+                          <select
+                            className="form-select"
+                            id="edit-service-linked-status"
+                            name="editStatus"
+                            defaultValue={
+                              selected.status === "Finished"
+                                ? "FINISHED"
+                                : "IN_PROGRESS"
+                            }
+                          >
+                            <option value="IN_PROGRESS">In Progress</option>
+                            <option value="FINISHED">Finished</option>
+                          </select>
+                          <div className="form-text">
+                            Choose Finished When This Gebet Completes The Linked Lehr.
+                          </div>
                         </div>
                       </>
                     )}

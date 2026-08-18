@@ -159,6 +159,7 @@ The same People table supplies Song By, Text By, and Vorrade By choices. New peo
 | `lehr_service_id` | text | required FK to `services` |
 | `gebet_service_id` | text | required FK to `services`; unique |
 | `sequence_number` | integer | required, greater than zero |
+| `lehr_status_after` | text | nullable; `IN_PROGRESS` or `FINISHED` after this Gebet |
 | `notes` | text | nullable |
 | `created_at` | text | required |
 
@@ -170,7 +171,10 @@ Constraints:
 - The two service IDs must be different.
 - Application logic, inside a transaction, verifies that the parent is a Lehr and the child is a Gebet. SQLite cannot express this cross-row type rule with an ordinary `CHECK`; migration triggers may additionally enforce it.
 - Links are ordered and represent all Gebets used while working through a Lehr, not merely the final Gebet.
+- A Gebet is linked automatically to the most recent earlier Lehr with the same `text_id` when that Lehr occurred within the preceding year. The user does not manually choose a Lehr. If no qualifying Lehr exists, the Gebet remains unlinked and the editor explains why.
 - `services.lehr_status` is the authoritative completion flag. Changing it to `FINISHED` is explicit; the presence of links alone does not imply completion.
+- A text begins at a Lehr and may continue through one or more linked Gebets. The Gebet editor exposes the linked Lehr status so the Gebet that completes the text can explicitly mark the original Lehr as `FINISHED`.
+- Gebets do not own a separate completion status. The link records the Lehr status after that specific Gebet, while `services.lehr_status` stores the Lehr's current overall status. This preserves which Gebet finished the Lehr and makes a future unfinished-Lehr view a direct query for Lehr services whose status is not `FINISHED`.
 
 ### `service_attachments`
 
