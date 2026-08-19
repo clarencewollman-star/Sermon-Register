@@ -149,7 +149,7 @@ A Text is reusable and does not contain service dates or completion state. `tags
 | `created_at` | text | required |
 | `updated_at` | text | required |
 
-The same People table supplies Song By, Text By, and Vorrade By choices. New people can be created within the service-entry flow.
+The same active People list supplies type-ahead choices for Song By, Text By, and Vorrade By. Each field also accepts a new name; saving the service creates that person once and makes the name available in all three lists. People remain a reusable database record but do not have a separate navigation tab.
 
 ### `lehr_gebet_links`
 
@@ -282,7 +282,7 @@ Core screens:
 2. Service register with search and filters.
 3. Add/edit service, adapting fields for Lehr or Gebet.
 4. Service detail with PDFs and Lehr continuation history.
-5. Reusable Songs, Texts, Vorraden, and People lists/details. Text records support multiple private PDFs and service-entry autocomplete.
+5. Reusable Songs, Texts, and Vorraden lists/details. People remain a shared service-entry suggestion list without a separate navigation view. Text records support multiple private PDFs and service-entry autocomplete.
 6. In-progress Lehr view for linking ordered Gebets and marking completion.
 7. Backup/health information for the administrator.
 
@@ -317,7 +317,7 @@ Preparation now is limited to clean relational data, stable IDs, attachment meta
 
 ### Stage 2 — reusable records
 
-- Build create, edit, search, activate/deactivate, and history views for Songs, Texts, Vorraden, and People.
+- Build create, edit, search, activate/deactivate, and history views for Songs, Texts, and Vorraden. People are created and reused through the shared service-entry fields.
 - Add searchable selectors and inline creation.
 
 ### Stage 3 — service register

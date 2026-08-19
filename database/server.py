@@ -346,6 +346,18 @@ def text_rows(con):
     return [dict(row) for row in con.execute(sql)]
 
 
+def people_rows(con):
+    return [
+        dict(row)
+        for row in con.execute(
+            """SELECT id, name
+                 FROM people
+                WHERE active = 1
+                ORDER BY name COLLATE NOCASE"""
+        )
+    ]
+
+
 def text_attachment_rows(con, text_id):
     return [
         dict(row)
@@ -810,6 +822,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/texts":
             with connect() as con:
                 return self.json(text_rows(con))
+        if path == "/people":
+            with connect() as con:
+                return self.json(people_rows(con))
         if path == "/text-attachments":
             parameters = parse_qs(parsed.query)
             attachment_id = str(parameters.get("fileId", [""])[0]).strip()

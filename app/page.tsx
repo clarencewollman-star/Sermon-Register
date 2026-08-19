@@ -62,6 +62,11 @@ type ApiSong = {
   last_used: string | null;
 };
 
+type Person = {
+  id: string;
+  name: string;
+};
+
 type TextRecord = {
   id: string;
   text: string;
@@ -108,7 +113,6 @@ const navItems = [
   { label: "Texts", icon: "bi-journal-text" },
   { label: "Vorraden", icon: "bi-files" },
   { label: "Songs", icon: "bi-music-note-list" },
-  { label: "People", icon: "bi-people" },
 ];
 
 const blankDraft = () => ({
@@ -126,6 +130,7 @@ const blankDraft = () => ({
 
 const apiUrl = () => "/api/services";
 const songsApiUrl = () => "/api/songs";
+const peopleApiUrl = () => "/api/people";
 const textsApiUrl = () => "/api/texts";
 const textAttachmentsApiUrl = () => "/api/text-attachments";
 
@@ -245,6 +250,7 @@ export default function Home() {
   const [songSortDirection, setSongSortDirection] = useState<"asc" | "desc">("asc");
   const [songEditor, setSongEditor] = useState<Song | "new" | null>(null);
   const [songError, setSongError] = useState("");
+  const [people, setPeople] = useState<Person[]>([]);
   const [texts, setTexts] = useState<TextRecord[]>([]);
   const [textQuery, setTextQuery] = useState("");
   const [textSort, setTextSort] = useState<TextSortField>("text");
@@ -280,6 +286,12 @@ export default function Home() {
       })
       .then((rows) => setSongs((rows as ApiSong[]).map(songFromApi)))
       .catch(() => setSongError("The Songs Could Not Be Loaded."));
+  }, []);
+
+  useEffect(() => {
+    void refreshPeople().catch(() =>
+      setSaveError("The People List Could Not Be Loaded."),
+    );
   }, []);
 
   useEffect(() => {
@@ -424,6 +436,12 @@ export default function Home() {
     setTexts(rows.map(textFromApi));
   }
 
+  async function refreshPeople() {
+    const response = await fetch(peopleApiUrl(), { cache: "no-store" });
+    if (!response.ok) throw new Error("Could Not Refresh People");
+    setPeople((await response.json()) as Person[]);
+  }
+
   async function loadTextAttachments(textId: string) {
     const response = await fetch(
       `${textAttachmentsApiUrl()}?textId=${encodeURIComponent(textId)}`,
@@ -458,6 +476,9 @@ export default function Home() {
     ]);
     void refreshSongs().catch(() => setSongError("The Songs Could Not Be Refreshed."));
     void refreshTexts().catch(() => setTextError("The Texts Could Not Be Refreshed."));
+    void refreshPeople().catch(() =>
+      setSaveError("The People List Could Not Be Refreshed."),
+    );
   }
 
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
@@ -499,6 +520,9 @@ export default function Home() {
       setSelected(null);
       void refreshSongs().catch(() => setSongError("The Songs Could Not Be Refreshed."));
       void refreshTexts().catch(() => setTextError("The Texts Could Not Be Refreshed."));
+      void refreshPeople().catch(() =>
+        setSaveError("The People List Could Not Be Refreshed."),
+      );
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could Not Update Service");
     }
@@ -1068,7 +1092,7 @@ export default function Home() {
                             name="inlineSongBy"
                             list="people-list"
                             defaultValue={draft.songBy}
-                            placeholder="Type New"
+                            placeholder="Choose Or Type New"
                             aria-label="New Service Song By"
                           />
                         </td>
@@ -1090,7 +1114,7 @@ export default function Home() {
                             name="inlineTextBy"
                             list="people-list"
                             defaultValue={draft.textBy}
-                            placeholder="Type New"
+                            placeholder="Choose Or Type New"
                             aria-label="New Service Text By"
                           />
                         </td>
@@ -1117,7 +1141,7 @@ export default function Home() {
                               name="inlineVorradeBy"
                               list="people-list"
                               defaultValue={draft.vorradeBy}
-                              placeholder="Type New"
+                              placeholder="Choose Or Type New"
                               aria-label="New Service Vorrade By"
                             />
                           ) : (
@@ -1999,7 +2023,7 @@ export default function Home() {
                         id="service-song-by"
                         name="songBy"
                         list="people-list"
-                        placeholder="Type A New Person"
+                        placeholder="Choose Or Type A New Person"
                       />
                     </div>
                     <div className="col-12">
@@ -2024,7 +2048,7 @@ export default function Home() {
                         id="service-text-by"
                         name="textBy"
                         list="people-list"
-                        placeholder="Type A New Person"
+                        placeholder="Choose Or Type A New Person"
                       />
                     </div>
                     {kind === "Lehr" && (
@@ -2050,7 +2074,7 @@ export default function Home() {
                             id="service-vorrade-by"
                             name="vorradeBy"
                             list="people-list"
-                            placeholder="Type A New Person"
+                            placeholder="Choose Or Type A New Person"
                           />
                         </div>
                         <div className="col-md-6">
@@ -2219,6 +2243,7 @@ export default function Home() {
                         name="editSongBy"
                         list="people-list"
                         defaultValue={selected.songBy}
+                        placeholder="Choose Or Type A New Person"
                       />
                     </div>
                     <div className="col-12">
@@ -2244,6 +2269,7 @@ export default function Home() {
                         name="editTextBy"
                         list="people-list"
                         defaultValue={selected.textBy}
+                        placeholder="Choose Or Type A New Person"
                       />
                     </div>
                     {editKind === "Lehr" && (
@@ -2293,6 +2319,7 @@ export default function Home() {
                             defaultValue={
                               selected.vorradeBy === "—" ? "" : selected.vorradeBy
                             }
+                            placeholder="Choose Or Type A New Person"
                           />
                         </div>
                       </>
@@ -2803,7 +2830,11 @@ export default function Home() {
           </option>
         ))}
       </datalist>
-      <datalist id="people-list" />
+      <datalist id="people-list">
+        {people.map((person) => (
+          <option key={person.id} value={person.name} />
+        ))}
+      </datalist>
       <datalist id="texts-list">
         {texts.map((record) => (
           <option key={record.id} value={record.text}>
