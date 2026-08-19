@@ -66,6 +66,7 @@ type TextRecord = {
   id: string;
   text: string;
   description: string;
+  tags: string;
   scriptureReference: string;
   songsForText: string;
   notes: string;
@@ -80,6 +81,7 @@ type ApiTextRecord = {
   id: string;
   text: string;
   description: string | null;
+  tags: string | null;
   scripture_reference: string | null;
   songs_for_text: string | null;
   notes: string | null;
@@ -99,7 +101,7 @@ type TextAttachment = {
 
 type EntryType = "" | "Lehr" | "Gebet";
 type SongSortField = "title" | "tags" | "timesUsed";
-type TextSortField = "text" | "timesUsed" | "lastUsed";
+type TextSortField = "text" | "tags" | "timesUsed" | "lastUsed";
 
 const navItems = [
   { label: "Register", icon: "bi-table" },
@@ -186,6 +188,7 @@ const textFromApi = (row: ApiTextRecord): TextRecord => ({
   id: row.id,
   text: row.text,
   description: row.description || "",
+  tags: row.tags || "",
   scriptureReference: row.scripture_reference || "",
   songsForText: row.songs_for_text || "",
   notes: row.notes || "",
@@ -358,16 +361,25 @@ export default function Home() {
   const visibleTexts = useMemo(
     () => {
       const filteredTexts = texts.filter((record) =>
-        `${record.text} ${record.description} ${record.scriptureReference} ${record.songsForText} ${record.notes}`
+        `${record.text} ${record.description} ${record.tags} ${record.scriptureReference} ${record.songsForText} ${record.notes}`
           .toLowerCase()
           .includes(textQuery.toLowerCase()),
       );
       return filteredTexts.sort((left, right) => {
+        if (textSort === "tags" && (!left.tags || !right.tags)) {
+          if (!left.tags && !right.tags) return 0;
+          return !left.tags ? 1 : -1;
+        }
         const comparison =
           textSort === "timesUsed"
             ? left.timesUsed - right.timesUsed
             : textSort === "lastUsed"
               ? left.lastUsedValue.localeCompare(right.lastUsedValue)
+              : textSort === "tags"
+                ? left.tags.localeCompare(right.tags, undefined, {
+                    numeric: true,
+                    sensitivity: "base",
+                  })
               : left.text.localeCompare(right.text, undefined, {
                   numeric: true,
                   sensitivity: "base",
@@ -384,7 +396,9 @@ export default function Home() {
       return;
     }
     setTextSort(field);
-    setTextSortDirection(field === "text" ? "asc" : "desc");
+    setTextSortDirection(
+      field === "timesUsed" || field === "lastUsed" ? "desc" : "asc",
+    );
   }
 
   function changeSongSort(field: SongSortField) {
@@ -577,6 +591,7 @@ export default function Home() {
           id: textEditor === "new" ? "" : textEditor.id,
           text,
           description: String(form.get("textDescription") || ""),
+          tags: String(form.get("textTags") || ""),
           scriptureReference: String(form.get("textScriptureReference") || ""),
           songsForText: String(form.get("textSongsForText") || ""),
           notes: String(form.get("textNotes") || ""),
@@ -1311,7 +1326,7 @@ export default function Home() {
                           className="form-control"
                           value={textQuery}
                           onChange={(event) => setTextQuery(event.target.value)}
-                          placeholder="Search Texts, Descriptions, Scripture References, Or Notes"
+                          placeholder="Search Texts, Descriptions, Tags, Scripture References, Or Notes"
                           aria-label="Search Texts"
                         />
                       </div>
@@ -1328,6 +1343,7 @@ export default function Home() {
                         aria-label="Sort Texts By"
                       >
                         <option value="text">Sort By Text</option>
+                        <option value="tags">Sort By Tags</option>
                         <option value="timesUsed">Sort By Times Used</option>
                         <option value="lastUsed">Sort By Last Used</option>
                       </select>
@@ -1418,6 +1434,32 @@ export default function Home() {
                         <th>Description</th>
                         <th>Scripture Reference</th>
                         <th
+                          aria-sort={
+                            textSort === "tags"
+                              ? textSortDirection === "asc"
+                                ? "ascending"
+                                : "descending"
+                              : "none"
+                          }
+                        >
+                          <button
+                            className="sort-header-button"
+                            type="button"
+                            onClick={() => changeTextSort("tags")}
+                          >
+                            Tags
+                            {textSort === "tags" && (
+                              <i
+                                className={`bi ${
+                                  textSortDirection === "asc"
+                                    ? "bi-caret-up-fill"
+                                    : "bi-caret-down-fill"
+                                }`}
+                              />
+                            )}
+                          </button>
+                        </th>
+                        <th
                           className="text-center"
                           aria-sort={
                             textSort === "timesUsed"
@@ -1496,6 +1538,22 @@ export default function Home() {
                           <td className="scripture-reference-cell">
                             {firstLine(record.scriptureReference)}
                           </td>
+                          <td className="text-tags-cell">
+                            <span className="d-flex flex-wrap gap-1">
+                              {record.tags
+                                .split(",")
+                                .map((tag) => tag.trim())
+                                .filter(Boolean)
+                                .map((tag) => (
+                                  <span
+                                    className="badge text-bg-light border"
+                                    key={tag}
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                            </span>
+                          </td>
                           <td className="text-center">{record.timesUsed}</td>
                           <td>{record.lastUsed}</td>
                           <td className="note-cell">{record.notes}</td>
@@ -1532,6 +1590,22 @@ export default function Home() {
                       {record.scriptureReference && (
                         <span className="badge text-bg-light border mt-2">
                           {firstLine(record.scriptureReference)}
+                        </span>
+                      )}
+                      {record.tags && (
+                        <span className="d-flex flex-wrap gap-1 mt-2">
+                          {record.tags
+                            .split(",")
+                            .map((tag) => tag.trim())
+                            .filter(Boolean)
+                            .map((tag) => (
+                              <span
+                                className="badge text-bg-primary-subtle border"
+                                key={tag}
+                              >
+                                {tag}
+                              </span>
+                            ))}
                         </span>
                       )}
                       <small className="d-block text-body-secondary mt-2">
@@ -2510,6 +2584,21 @@ export default function Home() {
                         }
                         placeholder="Description Of This Text"
                       />
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label" htmlFor="text-tags">
+                        Tags
+                      </label>
+                      <input
+                        className="form-control"
+                        id="text-tags"
+                        name="textTags"
+                        defaultValue={textEditor === "new" ? "" : textEditor.tags}
+                        placeholder="Faith, Marriage, Christmas"
+                      />
+                      <div className="form-text">
+                        Separate Multiple Tags With Commas.
+                      </div>
                     </div>
                     <div className="col-12">
                       <label

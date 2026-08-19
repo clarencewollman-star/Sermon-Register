@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS texts (
   id TEXT PRIMARY KEY,
   text TEXT NOT NULL COLLATE NOCASE,
   description TEXT,
+  tags TEXT,
   scripture_reference TEXT,
   songs_for_text TEXT,
   notes TEXT,
@@ -164,4 +165,4 @@ CREATE INDEX IF NOT EXISTS vorrade_attachments_owner_idx ON vorrade_attachments(
 CREATE INDEX IF NOT EXISTS service_imports_service_idx ON service_imports(service_id);
 CREATE INDEX IF NOT EXISTS text_attachments_owner_idx ON text_attachments(text_id);
 
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;

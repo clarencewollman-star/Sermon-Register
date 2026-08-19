@@ -174,23 +174,23 @@ button.nav-link {
 }
 
 .texts-table th:nth-child(1) {
-  width: 18%;
-}
-
-.texts-table th:nth-child(2) {
-  width: 27%;
-}
-
-.texts-table th:nth-child(3) {
   width: 15%;
 }
 
+.texts-table th:nth-child(2) {
+  width: 23%;
+}
+
+.texts-table th:nth-child(3) {
+  width: 14%;
+}
+
 .texts-table th:nth-child(4) {
-  width: 9%;
+  width: 14%;
 }
 
 .texts-table th:nth-child(5) {
-  width: 13%;
+  width: 8%;
 }
 
 .texts-table th:nth-child(6) {
@@ -198,7 +198,11 @@ button.nav-link {
 }
 
 .texts-table th:nth-child(7) {
-  width: 6%;
+  width: 9%;
+}
+
+.texts-table th:nth-child(8) {
+  width: 5%;
 }
 
 .texts-table .text-name-cell,
