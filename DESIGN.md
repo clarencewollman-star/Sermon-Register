@@ -9,6 +9,8 @@ Sermon Register is a private, self-hosted web application for recording, finding
 
 This file is the source of truth for application behavior, data, privacy, storage, and the staged implementation plan. The separately uploaded Tesla-inspired design document remains the visual design reference for such matters as layout, spacing, typography, color, and interaction feel. It is not the application architecture or database specification. If the two documents conflict on behavior or data, this file governs; visual details should be reconciled without changing the data model accidentally.
 
+AdminLTE 4 is the permanent application design system. New screens and controls must use its layout, card, table, form, button, navigation, modal, color, and utility patterns. Small project-specific CSS additions may control responsive sizing or layout, but must complement rather than replace AdminLTE 4.
+
 ## Confirmed requirements
 
 - The application is private and is not a public website.
@@ -109,7 +111,9 @@ Rules:
 | `created_at` | text | required |
 | `updated_at` | text | required |
 
-Songs are selected and displayed by Title. Any song number is entered as part of the Title rather than stored in a separate field. The Songs view shows Title, Tags, Times Used, Last Used, and Notes; usage values are derived from linked services rather than duplicated on the Song record.
+Songs are selected and displayed by Title. Any song number is entered as part of the Title rather than stored in a separate field. The Songs view shows Title, Tags, Times Used, Last Used, and Notes; usage values are derived from linked services rather than duplicated on the Song record. Song and Text records open in responsive full-window editors with a comfortable maximum content width, two-column desktop layouts where useful, and single-column phone layouts. After a new Song is created once with Save Song, leaving any Song editor field automatically saves the complete Song record and shows the result in the editor. Existing records show only Close rather than a redundant Save button. Closing waits for an in-progress automatic save; unsaved new records require confirmation before they are discarded.
+
+Automatic field saving applies only to existing Song and Text library records. Creating or editing a Service remains an atomic operation: leaving a Service field never writes to SQLite, and the complete Service record is saved only when the user presses its Save button.
 
 ### `texts`
 
@@ -125,7 +129,7 @@ Songs are selected and displayed by Title. Any song number is entered as part of
 | `created_at` | text | required |
 | `updated_at` | text | required |
 
-A Text is reusable and does not contain service dates or completion state. `tags` uses the same normalized, comma-separated behavior as Song tags. `songs_for_text` is displayed as **Songs For This Sermon**; it is an intentionally unstructured text box and does not create Song relationships. The Texts view shows Text, Description, the first line of Scripture Reference, Tags, Times Used, Last Used, Notes, and PDF count. Times Used counts only Lehr services, not their continuing Gebets. The view can be sorted by Text, Tags, Times Used, or Last Used in either direction. A Text may be deleted only when no service of either type references it; the server enforces this rule and removes the unused Text's PDF attachments with it.
+A Text is reusable and does not contain service dates or completion state. `tags` uses the same normalized, comma-separated behavior as Song tags. `songs_for_text` is displayed as **Songs For This Sermon**; it is an intentionally unstructured text box and does not create Song relationships. The Texts view shows Text, Description, the first line of Scripture Reference, Tags, Times Used, Last Used, Notes, and PDF count. Times Used counts only Lehr services, not their continuing Gebets. The view can be sorted by Text, Tags, Times Used, or Last Used in either direction. After a new Text is created once with Save Text, leaving any Text editor field automatically saves the complete Text record and shows the result in the editor. A Text editor cannot close while a PDF upload is still running. A Text may be deleted only when no service of either type references it; the server enforces this rule and removes the unused Text's PDF attachments with it.
 
 ### `vorraden`
 
@@ -150,6 +154,8 @@ A Text is reusable and does not contain service dates or completion state. `tags
 | `updated_at` | text | required |
 
 The same active People list supplies type-ahead choices for Song By, Text By, and Vorrade By. Each field also accepts a new name; saving the service creates that person once and makes the name available in all three lists. People remain a reusable database record but do not have a separate navigation tab.
+
+Service-entry type-ahead lists place the six most recently used unique Songs, Texts, and People first. Remaining choices follow alphabetically, and free typing still creates new reusable records through the normal save flow.
 
 ### `lehr_gebet_links`
 

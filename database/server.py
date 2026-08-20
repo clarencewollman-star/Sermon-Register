@@ -350,10 +350,25 @@ def people_rows(con):
     return [
         dict(row)
         for row in con.execute(
-            """SELECT id, name
+            """SELECT people.id, people.name,
+                      MAX(person_usage.service_date) AS last_used
                  FROM people
-                WHERE active = 1
-                ORDER BY name COLLATE NOCASE"""
+            LEFT JOIN (
+                       SELECT song_by_person_id AS person_id, service_date
+                         FROM services
+                        WHERE song_by_person_id IS NOT NULL
+                       UNION ALL
+                       SELECT text_by_person_id AS person_id, service_date
+                         FROM services
+                        WHERE text_by_person_id IS NOT NULL
+                       UNION ALL
+                       SELECT vorrade_by_person_id AS person_id, service_date
+                         FROM services
+                        WHERE vorrade_by_person_id IS NOT NULL
+                      ) person_usage ON person_usage.person_id = people.id
+                WHERE people.active = 1
+             GROUP BY people.id, people.name
+             ORDER BY people.name COLLATE NOCASE"""
         )
     ]
 

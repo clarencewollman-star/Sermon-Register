@@ -1,6 +1,15 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  ChangeEvent,
+  FocusEvent,
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 declare const __APP_VERSION__: string;
 
@@ -65,6 +74,13 @@ type ApiSong = {
 type Person = {
   id: string;
   name: string;
+  lastUsedValue: string;
+};
+
+type ApiPerson = {
+  id: string;
+  name: string;
+  last_used: string | null;
 };
 
 type TextRecord = {
@@ -210,10 +226,48 @@ const textFromApi = (row: ApiTextRecord): TextRecord => ({
   attachmentCount: Number(row.attachment_count || 0),
 });
 
+const personFromApi = (row: ApiPerson): Person => ({
+  id: row.id,
+  name: row.name,
+  lastUsedValue: row.last_used || "",
+});
+
+function recentlyUsedFirst<T extends { id: string; lastUsedValue: string }>(
+  records: T[],
+  label: (record: T) => string,
+) {
+  const alphabetical = [...records].sort((left, right) =>
+    label(left).localeCompare(label(right), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }),
+  );
+  const recent = alphabetical
+    .filter((record) => record.lastUsedValue)
+    .sort(
+      (left, right) =>
+        right.lastUsedValue.localeCompare(left.lastUsedValue) ||
+        label(left).localeCompare(label(right), undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }),
+    )
+    .slice(0, 6);
+  const recentIds = new Set(recent.map((record) => record.id));
+  return [...recent, ...alphabetical.filter((record) => !recentIds.has(record.id))];
+}
+
 function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formHasEnteredValues(formElement: HTMLFormElement | null) {
+  if (!formElement) return false;
+  return Array.from(new FormData(formElement).values()).some(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
 }
 
 function firstLine(value: string) {
@@ -250,6 +304,10 @@ export default function Home() {
   const [songSortDirection, setSongSortDirection] = useState<"asc" | "desc">("asc");
   const [songEditor, setSongEditor] = useState<Song | "new" | null>(null);
   const [songError, setSongError] = useState("");
+  const [songAutoSaveStatus, setSongAutoSaveStatus] = useState("");
+  const songAutoSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const songAutoSaveFailed = useRef(false);
+  const songFormRef = useRef<HTMLFormElement>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [texts, setTexts] = useState<TextRecord[]>([]);
   const [textQuery, setTextQuery] = useState("");
@@ -257,6 +315,10 @@ export default function Home() {
   const [textSortDirection, setTextSortDirection] = useState<"asc" | "desc">("asc");
   const [textEditor, setTextEditor] = useState<TextRecord | "new" | null>(null);
   const [textError, setTextError] = useState("");
+  const [textAutoSaveStatus, setTextAutoSaveStatus] = useState("");
+  const textAutoSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const textAutoSaveFailed = useRef(false);
+  const textFormRef = useRef<HTMLFormElement>(null);
   const [textAttachments, setTextAttachments] = useState<TextAttachment[]>([]);
   const [pdfUploading, setPdfUploading] = useState(false);
 
@@ -402,6 +464,21 @@ export default function Home() {
     [texts, textQuery, textSort, textSortDirection],
   );
 
+  const songChoices = useMemo(
+    () => recentlyUsedFirst(songs, (song) => song.title),
+    [songs],
+  );
+
+  const textChoices = useMemo(
+    () => recentlyUsedFirst(texts, (record) => record.text),
+    [texts],
+  );
+
+  const peopleChoices = useMemo(
+    () => recentlyUsedFirst(people, (person) => person.name),
+    [people],
+  );
+
   function changeTextSort(field: TextSortField) {
     if (textSort === field) {
       setTextSortDirection((current) => (current === "asc" ? "desc" : "asc"));
@@ -439,7 +516,7 @@ export default function Home() {
   async function refreshPeople() {
     const response = await fetch(peopleApiUrl(), { cache: "no-store" });
     if (!response.ok) throw new Error("Could Not Refresh People");
-    setPeople((await response.json()) as Person[]);
+    setPeople(((await response.json()) as ApiPerson[]).map(personFromApi));
   }
 
   async function loadTextAttachments(textId: string) {
@@ -551,25 +628,131 @@ export default function Home() {
     }
   }
 
-  async function saveSong(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function songPayload(formElement: HTMLFormElement) {
+    const form = new FormData(formElement);
+    return {
+      title: String(form.get("songTitle") || "").trim(),
+      tags: String(form.get("songTags") || ""),
+      notes: String(form.get("songNotes") || ""),
+    };
+  }
+
+  function textPayload(formElement: HTMLFormElement) {
+    const form = new FormData(formElement);
+    return {
+      text: String(form.get("textText") || "").trim(),
+      description: String(form.get("textDescription") || ""),
+      tags: String(form.get("textTags") || ""),
+      scriptureReference: String(form.get("textScriptureReference") || ""),
+      songsForText: String(form.get("textSongsForText") || ""),
+      notes: String(form.get("textNotes") || ""),
+    };
+  }
+
+  const closeSongEditor = useCallback(async () => {
     if (!songEditor) return;
-    const form = new FormData(event.currentTarget);
-    const title = String(form.get("songTitle") || "").trim();
-    if (!title) {
+    if (
+      songEditor === "new" &&
+      formHasEnteredValues(songFormRef.current) &&
+      !window.confirm("Close Without Saving This New Song?")
+    ) {
+      return;
+    }
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLElement &&
+      songFormRef.current?.contains(activeElement)
+    ) {
+      activeElement.blur();
+    }
+    await songAutoSaveQueue.current;
+    if (songAutoSaveFailed.current) return;
+    setSongEditor(null);
+  }, [songEditor]);
+
+  const closeTextEditor = useCallback(async () => {
+    if (!textEditor) return;
+    if (pdfUploading) {
+      setTextError("Please Wait For The PDF Upload To Finish Before Closing.");
+      return;
+    }
+    if (
+      textEditor === "new" &&
+      formHasEnteredValues(textFormRef.current) &&
+      !window.confirm("Close Without Saving This New Text?")
+    ) {
+      return;
+    }
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLElement &&
+      textFormRef.current?.contains(activeElement)
+    ) {
+      activeElement.blur();
+    }
+    await textAutoSaveQueue.current;
+    if (textAutoSaveFailed.current) return;
+    setTextEditor(null);
+  }, [pdfUploading, textEditor]);
+
+  function autoSaveSong(event: FocusEvent<HTMLFormElement>) {
+    if (!songEditor || songEditor === "new") return;
+    const target = event.target as HTMLElement;
+    if (!target.matches("input[name], textarea[name]")) return;
+    const payload = songPayload(event.currentTarget);
+    if (!payload.title) {
+      songAutoSaveFailed.current = true;
       setSongError("Song Title Is Required.");
       return;
     }
+    const songId = songEditor.id;
+    songAutoSaveQueue.current = songAutoSaveQueue.current.then(async () => {
+      songAutoSaveFailed.current = false;
+      setSongAutoSaveStatus("Saving...");
+      setSongError("");
+      try {
+        const response = await fetch(songsApiUrl(), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: songId, ...payload }),
+        });
+        const result = (await response.json()) as ApiSong & { error?: string };
+        if (!response.ok) throw new Error(result.error || "Could Not Save Song");
+        const saved = songFromApi(result);
+        setSongs((current) =>
+          current
+            .map((song) => (song.id === saved.id ? saved : song))
+            .sort((left, right) => left.title.localeCompare(right.title)),
+        );
+        setSongAutoSaveStatus("Saved Automatically");
+      } catch (error) {
+        songAutoSaveFailed.current = true;
+        setSongError(error instanceof Error ? error.message : "Could Not Save Song");
+        setSongAutoSaveStatus("Automatic Save Failed");
+      }
+    });
+  }
+
+  async function saveSong(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!songEditor) return;
+    await songAutoSaveQueue.current;
+    const payload = songPayload(event.currentTarget);
+    if (!payload.title) {
+      setSongError("Song Title Is Required.");
+      return;
+    }
+    const currentEditor = songEditor;
+    songAutoSaveFailed.current = false;
+    setSongAutoSaveStatus("Saving...");
     setSongError("");
     try {
       const response = await fetch(songsApiUrl(), {
-        method: songEditor === "new" ? "POST" : "PUT",
+        method: currentEditor === "new" ? "POST" : "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id: songEditor === "new" ? "" : songEditor.id,
-          title,
-          tags: String(form.get("songTags") || ""),
-          notes: String(form.get("songNotes") || ""),
+          id: currentEditor === "new" ? "" : currentEditor.id,
+          ...payload,
         }),
       });
       const result = (await response.json()) as ApiSong & { error?: string };
@@ -577,19 +760,31 @@ export default function Home() {
       const saved = songFromApi(result);
       setSongs((current) => {
         const next =
-          songEditor === "new"
+          currentEditor === "new"
             ? [...current, saved]
             : current.map((song) => (song.id === saved.id ? saved : song));
         return next.sort((left, right) => left.title.localeCompare(right.title));
       });
-      setSongEditor(null);
+      setSongEditor(saved);
+      setSongAutoSaveStatus("Saved");
     } catch (error) {
+      songAutoSaveFailed.current = true;
       setSongError(error instanceof Error ? error.message : "Could Not Save Song");
+      setSongAutoSaveStatus("Save Failed");
     }
+  }
+
+  function openSongEditor(record: Song | "new") {
+    setSongError("");
+    setSongAutoSaveStatus("");
+    songAutoSaveFailed.current = false;
+    setSongEditor(record);
   }
 
   function openTextEditor(record: TextRecord) {
     setTextError("");
+    setTextAutoSaveStatus("");
+    textAutoSaveFailed.current = false;
     setTextAttachments([]);
     setTextEditor(record);
     void loadTextAttachments(record.id).catch((error) =>
@@ -597,28 +792,64 @@ export default function Home() {
     );
   }
 
-  async function saveText(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!textEditor) return;
-    const form = new FormData(event.currentTarget);
-    const text = String(form.get("textText") || "").trim();
-    if (!text) {
+  function autoSaveText(event: FocusEvent<HTMLFormElement>) {
+    if (!textEditor || textEditor === "new") return;
+    const target = event.target as HTMLElement;
+    if (!target.matches("input[name], textarea[name]")) return;
+    const payload = textPayload(event.currentTarget);
+    if (!payload.text) {
+      textAutoSaveFailed.current = true;
       setTextError("Text Is Required.");
       return;
     }
+    const textId = textEditor.id;
+    textAutoSaveQueue.current = textAutoSaveQueue.current.then(async () => {
+      textAutoSaveFailed.current = false;
+      setTextAutoSaveStatus("Saving...");
+      setTextError("");
+      try {
+        const response = await fetch(textsApiUrl(), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: textId, ...payload }),
+        });
+        const result = (await response.json()) as ApiTextRecord & { error?: string };
+        if (!response.ok) throw new Error(result.error || "Could Not Save Text");
+        const saved = textFromApi(result);
+        setTexts((current) =>
+          current
+            .map((record) => (record.id === saved.id ? saved : record))
+            .sort((left, right) => left.text.localeCompare(right.text)),
+        );
+        setTextAutoSaveStatus("Saved Automatically");
+      } catch (error) {
+        textAutoSaveFailed.current = true;
+        setTextError(error instanceof Error ? error.message : "Could Not Save Text");
+        setTextAutoSaveStatus("Automatic Save Failed");
+      }
+    });
+  }
+
+  async function saveText(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!textEditor) return;
+    await textAutoSaveQueue.current;
+    const payload = textPayload(event.currentTarget);
+    if (!payload.text) {
+      setTextError("Text Is Required.");
+      return;
+    }
+    const currentEditor = textEditor;
+    textAutoSaveFailed.current = false;
+    setTextAutoSaveStatus("Saving...");
     setTextError("");
     try {
       const response = await fetch(textsApiUrl(), {
-        method: textEditor === "new" ? "POST" : "PUT",
+        method: currentEditor === "new" ? "POST" : "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id: textEditor === "new" ? "" : textEditor.id,
-          text,
-          description: String(form.get("textDescription") || ""),
-          tags: String(form.get("textTags") || ""),
-          scriptureReference: String(form.get("textScriptureReference") || ""),
-          songsForText: String(form.get("textSongsForText") || ""),
-          notes: String(form.get("textNotes") || ""),
+          id: currentEditor === "new" ? "" : currentEditor.id,
+          ...payload,
         }),
       });
       const result = (await response.json()) as ApiTextRecord & { error?: string };
@@ -626,20 +857,25 @@ export default function Home() {
       const saved = textFromApi(result);
       setTexts((current) => {
         const next =
-          textEditor === "new"
+          currentEditor === "new"
             ? [...current, saved]
             : current.map((record) => (record.id === saved.id ? saved : record));
         return next.sort((left, right) => left.text.localeCompare(right.text));
       });
       setTextEditor(saved);
+      setTextAutoSaveStatus("Saved");
     } catch (error) {
+      textAutoSaveFailed.current = true;
       setTextError(error instanceof Error ? error.message : "Could Not Save Text");
+      setTextAutoSaveStatus("Save Failed");
     }
   }
 
   async function deleteText() {
     if (!textEditor || textEditor === "new" || textEditor.serviceCount > 0) return;
     if (!window.confirm("Delete This Text? This Cannot Be Undone.")) return;
+    await textAutoSaveQueue.current;
+    if (textAutoSaveFailed.current) return;
     setTextError("");
     try {
       const response = await fetch(textsApiUrl(), {
@@ -722,8 +958,7 @@ export default function Home() {
     );
     if (!song) return;
     setActive("Songs");
-    setSongError("");
-    setSongEditor(song);
+    openSongEditor(song);
   }
 
   function openTextFromRegister(value: string) {
@@ -855,6 +1090,21 @@ export default function Home() {
       );
     }
   }
+
+  useEffect(() => {
+    if (!songEditor && !textEditor) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (songEditor) {
+        void closeSongEditor();
+      } else {
+        void closeTextEditor();
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [closeSongEditor, closeTextEditor, songEditor, textEditor]);
 
   return (
     <div className="app-wrapper">
@@ -1407,6 +1657,8 @@ export default function Home() {
                         type="button"
                         onClick={() => {
                           setTextError("");
+                          setTextAutoSaveStatus("");
+                          textAutoSaveFailed.current = false;
                           setTextAttachments([]);
                           setTextEditor("new");
                         }}
@@ -1716,10 +1968,7 @@ export default function Home() {
                       <button
                         className="btn btn-primary"
                         type="button"
-                        onClick={() => {
-                          setSongError("");
-                          setSongEditor("new");
-                        }}
+                        onClick={() => openSongEditor("new")}
                       >
                         <i className="bi bi-plus-lg me-1" />
                         Add Song
@@ -1829,13 +2078,10 @@ export default function Home() {
                           key={song.id}
                           role="button"
                           tabIndex={0}
-                          onClick={() => {
-                            setSongError("");
-                            setSongEditor(song);
-                          }}
+                          onClick={() => openSongEditor(song)}
                           onKeyDown={(event) =>
                             (event.key === "Enter" || event.key === " ") &&
-                            setSongEditor(song)
+                            openSongEditor(song)
                           }
                         >
                           <td className="fw-semibold">{song.title}</td>
@@ -1867,10 +2113,7 @@ export default function Home() {
                       type="button"
                       className="list-group-item list-group-item-action p-3 text-start"
                       key={song.id}
-                      onClick={() => {
-                        setSongError("");
-                        setSongEditor(song);
-                      }}
+                      onClick={() => openSongEditor(song)}
                     >
                       <strong className="d-block">{song.title}</strong>
                       {song.tags && (
@@ -2414,7 +2657,7 @@ export default function Home() {
                     <i className="bi bi-trash3 me-1" />
                     Delete Service
                   </button>
-                  <div className="d-flex gap-2">
+                  <div className="d-flex flex-wrap align-items-center gap-2">
                     <button
                       type="button"
                       className="btn btn-outline-secondary"
@@ -2436,13 +2679,13 @@ export default function Home() {
 
       {songEditor && (
         <div
-          className="modal fade show d-block service-edit-modal"
+          className="modal fade show d-block service-edit-modal library-editor-modal"
           tabIndex={-1}
           role="dialog"
           aria-modal="true"
           aria-labelledby="song-editor-title"
         >
-          <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+          <div className="modal-dialog modal-fullscreen">
             <div className="modal-content card card-primary card-outline mb-0">
               <div className="modal-header">
                 <div>
@@ -2457,11 +2700,17 @@ export default function Home() {
                   type="button"
                   className="btn-close"
                   aria-label="Close Song Editor"
-                  onClick={() => setSongEditor(null)}
+                  onClick={() => void closeSongEditor()}
                 />
               </div>
-              <form key={songEditor === "new" ? "new" : songEditor.id} onSubmit={saveSong}>
+              <form
+                ref={songFormRef}
+                key={songEditor === "new" ? "new" : songEditor.id}
+                onSubmit={saveSong}
+                onBlur={autoSaveSong}
+              >
                 <div className="modal-body">
+                  <div className="library-editor-content">
                   {songError && (
                     <div className="alert alert-danger" role="alert">
                       <i className="bi bi-exclamation-triangle-fill me-2" />
@@ -2469,7 +2718,7 @@ export default function Home() {
                     </div>
                   )}
                   <div className="row g-3">
-                    <div className="col-12">
+                    <div className="col-12 col-lg-7">
                       <label className="form-label" htmlFor="song-title">
                         Title
                       </label>
@@ -2482,7 +2731,7 @@ export default function Home() {
                         required
                       />
                     </div>
-                    <div className="col-12">
+                    <div className="col-12 col-lg-5">
                       <label className="form-label" htmlFor="song-tags">
                         Tags
                       </label>
@@ -2505,7 +2754,7 @@ export default function Home() {
                         className="form-control"
                         id="song-notes"
                         name="songNotes"
-                        rows={4}
+                        rows={9}
                         defaultValue={songEditor === "new" ? "" : songEditor.notes}
                         placeholder="Notes About This Song"
                       />
@@ -2527,19 +2776,29 @@ export default function Home() {
                       </div>
                     )}
                   </div>
+                  </div>
                 </div>
-                <div className="modal-footer">
-                  <button
-                    type="button"
-                    className="btn btn-outline-secondary"
-                    onClick={() => setSongEditor(null)}
-                  >
-                    Cancel
-                  </button>
-                  <button className="btn btn-primary" type="submit">
-                    <i className="bi bi-check-lg me-1" />
-                    Save Song
-                  </button>
+                <div className="modal-footer justify-content-between">
+                  <small className="text-body-secondary">
+                    {songEditor === "new"
+                      ? "Save This New Song Once To Start Automatic Saving."
+                      : songAutoSaveStatus || "Changes Save Automatically."}
+                  </small>
+                  <div className="d-flex flex-wrap align-items-center gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary"
+                      onClick={() => void closeSongEditor()}
+                    >
+                      Close
+                    </button>
+                    {songEditor === "new" && (
+                      <button className="btn btn-primary" type="submit">
+                        <i className="bi bi-check-lg me-1" />
+                        Save Song
+                      </button>
+                    )}
+                  </div>
                 </div>
               </form>
             </div>
@@ -2549,13 +2808,13 @@ export default function Home() {
 
       {textEditor && (
         <div
-          className="modal fade show d-block service-edit-modal"
+          className="modal fade show d-block service-edit-modal library-editor-modal"
           tabIndex={-1}
           role="dialog"
           aria-modal="true"
           aria-labelledby="text-editor-title"
         >
-          <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+          <div className="modal-dialog modal-fullscreen">
             <div className="modal-content card card-primary card-outline mb-0">
               <div className="modal-header">
                 <div>
@@ -2570,14 +2829,17 @@ export default function Home() {
                   type="button"
                   className="btn-close"
                   aria-label="Close Text Editor"
-                  onClick={() => setTextEditor(null)}
+                  onClick={() => void closeTextEditor()}
                 />
               </div>
               <form
+                ref={textFormRef}
                 key={textEditor === "new" ? "new" : textEditor.id}
                 onSubmit={saveText}
+                onBlur={autoSaveText}
               >
                 <div className="modal-body">
+                  <div className="library-editor-content">
                   {textError && (
                     <div className="alert alert-danger" role="alert">
                       <i className="bi bi-exclamation-triangle-fill me-2" />
@@ -2585,7 +2847,7 @@ export default function Home() {
                     </div>
                   )}
                   <div className="row g-3">
-                    <div className="col-12">
+                    <div className="col-12 col-lg-4">
                       <label className="form-label" htmlFor="text-text">
                         Text
                       </label>
@@ -2598,7 +2860,7 @@ export default function Home() {
                         required
                       />
                     </div>
-                    <div className="col-12">
+                    <div className="col-12 col-lg-8">
                       <label className="form-label" htmlFor="text-description">
                         Description
                       </label>
@@ -2627,7 +2889,7 @@ export default function Home() {
                         Separate Multiple Tags With Commas.
                       </div>
                     </div>
-                    <div className="col-12">
+                    <div className="col-12 col-lg-6">
                       <label
                         className="form-label"
                         htmlFor="text-scripture-reference"
@@ -2638,7 +2900,7 @@ export default function Home() {
                         className="form-control"
                         id="text-scripture-reference"
                         name="textScriptureReference"
-                        rows={3}
+                        rows={5}
                         defaultValue={
                           textEditor === "new"
                             ? ""
@@ -2647,7 +2909,7 @@ export default function Home() {
                         placeholder="For Example, John 3:16"
                       />
                     </div>
-                    <div className="col-12">
+                    <div className="col-12 col-lg-6">
                       <label
                         className="form-label"
                         htmlFor="text-songs-for-text"
@@ -2658,7 +2920,7 @@ export default function Home() {
                         className="form-control"
                         id="text-songs-for-text"
                         name="textSongsForText"
-                        rows={3}
+                        rows={5}
                         defaultValue={
                           textEditor === "new" ? "" : textEditor.songsForText
                         }
@@ -2673,7 +2935,7 @@ export default function Home() {
                         className="form-control"
                         id="text-notes"
                         name="textNotes"
-                        rows={3}
+                        rows={6}
                         defaultValue={textEditor === "new" ? "" : textEditor.notes}
                         placeholder="Notes About This Text"
                       />
@@ -2782,6 +3044,7 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
+                  </div>
                 </div>
                 <div
                   className={`modal-footer ${
@@ -2803,18 +3066,25 @@ export default function Home() {
                         Used Texts Cannot Be Deleted.
                       </small>
                     ))}
-                  <div className="d-flex gap-2">
+                  <div className="d-flex flex-wrap align-items-center gap-2">
+                    <small className="text-body-secondary align-self-center me-2">
+                      {textEditor === "new"
+                        ? "Save This New Text Once To Start Automatic Saving."
+                        : textAutoSaveStatus || "Changes Save Automatically."}
+                    </small>
                     <button
                       type="button"
                       className="btn btn-outline-secondary"
-                      onClick={() => setTextEditor(null)}
+                      onClick={() => void closeTextEditor()}
                     >
                       Close
                     </button>
-                    <button className="btn btn-primary" type="submit">
-                      <i className="bi bi-check-lg me-1" />
-                      Save Text
-                    </button>
+                    {textEditor === "new" && (
+                      <button className="btn btn-primary" type="submit">
+                        <i className="bi bi-check-lg me-1" />
+                        Save Text
+                      </button>
+                    )}
                   </div>
                 </div>
               </form>
@@ -2824,19 +3094,19 @@ export default function Home() {
       )}
 
       <datalist id="songs-list">
-        {songs.map((song) => (
+        {songChoices.map((song) => (
           <option key={song.id} value={song.title}>
             {song.tags}
           </option>
         ))}
       </datalist>
       <datalist id="people-list">
-        {people.map((person) => (
+        {peopleChoices.map((person) => (
           <option key={person.id} value={person.name} />
         ))}
       </datalist>
       <datalist id="texts-list">
-        {texts.map((record) => (
+        {textChoices.map((record) => (
           <option key={record.id} value={record.text}>
             {record.description}
           </option>
