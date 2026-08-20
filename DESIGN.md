@@ -115,6 +115,10 @@ Songs are selected and displayed by Title. Any song number is entered as part of
 
 Automatic field saving applies only to existing Song and Text library records. Creating or editing a Service remains an atomic operation: leaving a Service field never writes to SQLite, and the complete Service record is saved only when the user presses its Save button.
 
+In both the desktop register table and the phone register list, a linked Text's Description is shown directly beneath its Text name when the reusable Text record has a Description. No empty placeholder is shown when the Description is blank.
+
+Opening a linked Song or Text from the Register displays its full-window library editor without changing the active Register section underneath. Closing the editor therefore returns the user to the same Register view and filters they were using.
+
 ### `texts`
 
 | Column | Type | Rules |

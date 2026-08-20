@@ -474,6 +474,11 @@ export default function Home() {
     [texts],
   );
 
+  const textDescriptionsByTitle = useMemo(
+    () => new Map(texts.map((record) => [record.text, record.description])),
+    [texts],
+  );
+
   const peopleChoices = useMemo(
     () => recentlyUsedFirst(people, (person) => person.name),
     [people],
@@ -957,7 +962,6 @@ export default function Home() {
       (record) => record.title.localeCompare(title, undefined, { sensitivity: "base" }) === 0,
     );
     if (!song) return;
-    setActive("Songs");
     openSongEditor(song);
   }
 
@@ -967,7 +971,6 @@ export default function Home() {
         candidate.text.localeCompare(value, undefined, { sensitivity: "base" }) === 0,
     );
     if (!record) return;
-    setActive("Texts");
     openTextEditor(record);
   }
 
@@ -1494,6 +1497,11 @@ export default function Home() {
                             >
                               {service.text}
                             </button>
+                            {textDescriptionsByTitle.get(service.text) && (
+                              <small className="d-block fw-normal text-body-secondary mt-1 lh-sm">
+                                {textDescriptionsByTitle.get(service.text)}
+                              </small>
+                            )}
                           </td>
                           <td className="person-column">{service.textBy}</td>
                           <td className="vorrade-column">{service.vorrade}</td>
@@ -1546,6 +1554,11 @@ export default function Home() {
                       >
                         {service.text}
                       </button>
+                      {textDescriptionsByTitle.get(service.text) && (
+                        <small className="d-block text-body-secondary mt-1 lh-sm">
+                          {textDescriptionsByTitle.get(service.text)}
+                        </small>
+                      )}
                       {(service.song || service.textBy) && (
                         <small className="d-block text-body-secondary mt-1">
                           {service.song && (
