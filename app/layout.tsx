@@ -4,7 +4,7 @@ import "bootstrap-icons/font/bootstrap-icons.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Sermon Register",
+  title: "Lehr Register",
   description: "A private register for Lehr and Gebet services.",
 };
 

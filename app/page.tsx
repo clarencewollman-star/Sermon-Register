@@ -18,6 +18,7 @@ type Service = {
   dateValue: string;
   date: string;
   day: string;
+  mobileDate: string;
   type: "Lehr" | "Gebet";
   song: string;
   songBy: string;
@@ -163,6 +164,13 @@ const fromApi = (row: ApiService): Service => {
       year: "numeric",
     }),
     day: date.toLocaleDateString("en-US", { weekday: "long" }),
+    mobileDate: `${date.toLocaleDateString("en-US", {
+      weekday: "short",
+    })} · ${date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    })}`,
     type: row.service_type === "LEHR" ? "Lehr" : "Gebet",
     song: row.song || "",
     songBy: row.song_by || "",
@@ -1124,8 +1132,10 @@ export default function Home() {
             <i className="bi bi-list fs-4" />
           </button>
           <span className="navbar-brand d-flex align-items-center mb-0">
-            <span className="brand-mark">S</span>
-            <span className="d-none d-sm-inline">Sermon Register</span>
+            <span className="brand-mark">
+              <i className="bi bi-book-half" aria-hidden="true" />
+            </span>
+            <span className="d-none d-sm-inline">Lehr Register</span>
           </span>
           <div className="ms-auto d-flex align-items-center gap-2">
             <span
@@ -1143,8 +1153,10 @@ export default function Home() {
         data-bs-theme="dark"
       >
         <div className="sidebar-brand">
-          <span className="brand-mark">S</span>
-          <span className="brand-text fw-semibold">Sermon Register</span>
+          <span className="brand-mark">
+            <i className="bi bi-book-half" aria-hidden="true" />
+          </span>
+          <span className="brand-text fw-semibold">Lehr Register</span>
         </div>
         <div className="sidebar-wrapper">
           <nav className="mt-2" aria-label="Main Navigation">
@@ -1186,7 +1198,7 @@ export default function Home() {
           <div className="container-fluid">
             <div className="row align-items-center">
               <div className="col-sm-6">
-                <h3 className="mb-0">{active === "Register" ? "Service Register" : active}</h3>
+                <h3 className="mb-0">{active === "Register" ? "Lehr Register" : active}</h3>
                 <p className="text-body-secondary mb-0 mt-1">
                   {active === "Register"
                     ? "Weekly Lehr And Gebet History"
@@ -1195,7 +1207,7 @@ export default function Home() {
               </div>
               <div className="col-sm-6 d-none d-sm-block">
                 <ol className="breadcrumb float-sm-end mb-0">
-                  <li className="breadcrumb-item">Sermon Register</li>
+                  <li className="breadcrumb-item">Lehr Register</li>
                   <li className="breadcrumb-item active" aria-current="page">
                     {active}
                   </li>
@@ -1210,7 +1222,7 @@ export default function Home() {
             {active === "Register" ? (
               <div className="card card-primary card-outline shadow-sm register-card">
                 <div className="card-header register-toolbar border-bottom">
-                  <div className="row g-2 align-items-center">
+                  <div className="row g-2 align-items-center d-none d-md-flex">
                     <div className="col-12 col-lg">
                       <div className="input-group">
                         <span className="input-group-text">
@@ -1255,15 +1267,56 @@ export default function Home() {
                         {visible.length} Services
                       </span>
                     </div>
-                    <div className="col-12 d-md-none">
+                  </div>
+                  <div className="mobile-register-toolbar d-md-none">
+                    <div className="d-flex gap-2">
+                      <div className="input-group flex-grow-1 min-width-0">
+                        <span className="input-group-text">
+                          <i className="bi bi-search" />
+                        </span>
+                        <input
+                          className="form-control"
+                          value={query}
+                          onChange={(event) => setQuery(event.target.value)}
+                          placeholder="Search Services"
+                          aria-label="Search Services"
+                        />
+                      </div>
                       <button
-                        className="btn btn-primary w-100"
+                        className="btn btn-primary flex-shrink-0"
                         type="button"
                         onClick={startNew}
                       >
                         <i className="bi bi-plus-lg me-1" />
-                        Add Service
+                        Add
                       </button>
+                    </div>
+                    <div className="row g-2 mt-0">
+                      <div className="col-6">
+                        <select
+                          className="form-select"
+                          value={filter}
+                          onChange={(event) => setFilter(event.target.value)}
+                          aria-label="Service Type"
+                        >
+                          <option>All Services</option>
+                          <option>Lehr</option>
+                          <option>Gebet</option>
+                        </select>
+                      </div>
+                      <div className="col-6">
+                        <select
+                          className="form-select"
+                          value={year}
+                          onChange={(event) => setYear(event.target.value)}
+                          aria-label="Year"
+                        >
+                          <option>All Years</option>
+                          {years.map((availableYear) => (
+                            <option key={availableYear}>{availableYear}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1521,10 +1574,10 @@ export default function Home() {
                   </table>
                 </div>
 
-                <div className="list-group list-group-flush mobile-service-list">
+                <div className="list-group list-group-flush mobile-service-list compact-mobile-register">
                   {visible.map((service) => (
                     <div
-                      className="list-group-item list-group-item-action p-3"
+                      className="list-group-item list-group-item-action mobile-service-row"
                       key={service.id}
                       role="button"
                       tabIndex={0}
@@ -1534,67 +1587,68 @@ export default function Home() {
                         openService(service)
                       }
                     >
-                      <span className="d-flex justify-content-between gap-3">
-                        <strong>
-                          {service.day}, {service.date}
-                        </strong>
+                      <div className="mobile-service-heading">
+                        <span className="mobile-service-date">
+                          {service.mobileDate}
+                        </span>
                         <span
                           className={`badge ${service.type === "Lehr" ? "text-bg-primary" : "text-bg-warning"}`}
                         >
                           {service.type}
                         </span>
-                      </span>
+                      </div>
                       <button
-                        className="btn btn-link register-record-link d-block fw-semibold mt-3"
+                        className="btn btn-link register-record-link mobile-text-record-link"
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation();
                           openTextFromRegister(service.text);
                         }}
                       >
-                        {service.text}
+                        <span className="mobile-text-title">{service.text}</span>
+                        {textDescriptionsByTitle.get(service.text) && (
+                          <span className="mobile-text-description">
+                            {textDescriptionsByTitle.get(service.text)}
+                          </span>
+                        )}
                       </button>
-                      {textDescriptionsByTitle.get(service.text) && (
-                        <small className="d-block text-body-secondary mt-1 lh-sm">
-                          {textDescriptionsByTitle.get(service.text)}
-                        </small>
-                      )}
                       {(service.song || service.textBy) && (
-                        <small className="d-block text-body-secondary mt-1">
+                        <div
+                          className={`mobile-service-meta ${
+                            service.song && service.textBy ? "has-both" : ""
+                          }`}
+                        >
+                          {service.textBy && (
+                            <span className="mobile-service-preacher">
+                              {service.textBy}
+                            </span>
+                          )}
+                          {service.song && service.textBy && (
+                            <span className="mobile-service-separator" aria-hidden="true">
+                              ·
+                            </span>
+                          )}
                           {service.song && (
                             <button
-                              className="btn btn-link register-record-link small-link"
+                              className="btn btn-link register-record-link mobile-song-link"
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 openSongFromRegister(service.song);
                               }}
                             >
-                              {service.song}
+                              <i className="bi bi-music-note" aria-hidden="true" />
+                              <span>{service.song}</span>
                             </button>
                           )}
-                          {service.song && service.textBy ? " · " : ""}
-                          {service.textBy}
-                        </small>
-                      )}
-                      {service.type === "Lehr" && service.vorrade && (
-                        <small className="d-block text-body-secondary mt-1">
-                          {[service.vorrade, service.vorradeBy]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </small>
-                      )}
-                      {service.status && (
-                        <span className="badge text-bg-secondary mt-2">
-                          {service.status}
-                        </span>
+                        </div>
                       )}
                     </div>
                   ))}
                 </div>
 
                 {!visible.length && (
-                  <div className="card-body text-center text-body-secondary py-5">
+                  <div className="card-body text-center text-body-secondary py-5 register-empty-state">
                     <i className="bi bi-inbox fs-2 d-block mb-2" />
                     No Services Match Your Search.
                   </div>
@@ -2182,7 +2236,7 @@ export default function Home() {
         <span className="float-end d-none d-sm-inline app-version">
           Version {__APP_VERSION__}
         </span>
-          <strong>Sermon Register</strong> · Private SQLite Storage
+          <strong>Lehr Register</strong> · Private SQLite Storage
       </footer>
 
       <nav className="mobile-tabbar nav nav-pills nav-fill border-top shadow-lg">

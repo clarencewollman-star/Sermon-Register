@@ -11,6 +11,8 @@ This file is the source of truth for application behavior, data, privacy, storag
 
 AdminLTE 4 is the permanent application design system. New screens and controls must use its layout, card, table, form, button, navigation, modal, color, and utility patterns. Small project-specific CSS additions may control responsive sizing or layout, but must complement rather than replace AdminLTE 4.
 
+The user-visible application name is **Lehr Register**, represented by an open-book brand icon. Technical names such as the repository, package, Docker image, API paths, SQLite filename, storage folders, and deployment configuration remain unchanged to preserve compatibility.
+
 ## Confirmed requirements
 
 - The application is private and is not a public website.
@@ -284,7 +286,9 @@ sermon-register/
 
 The Windows register should provide a fast table-like view with sorting, filters, keyboard-friendly editing, searchable reusable-record selectors, and an inline “add new” action. It should feel spreadsheet-like without behaving like an unvalidated spreadsheet.
 
-The iPhone interface should use a responsive list and focused edit form instead of squeezing all columns into a grid. Both interfaces use the same records, validation, and server operations.
+The iPhone interface should use a responsive list and focused edit form instead of squeezing all columns into a grid. Both interfaces use the same records, validation, and server operations. Below the existing 768-pixel breakpoint, the Register uses a compact two-line toolbar: Search and Add share the first line, and Service Type and Year share the second; the service count and page subtitle are hidden, while the fixed compact bottom navigation remains unchanged.
+
+Each iPhone service is a flat AdminLTE list-group row inside the outlined Register card. The row shows `Sun · Aug 16, 2026` and a title-case Lehr or Gebet badge, a one-line linked Text name, up to two lines of linked Text Description, and a final one-line `CCW · ♪ Song Title` summary. Long preacher and Song values share the width and truncate only when necessary. Missing Description, preacher, or Song values consume no space. Vorrade, Notes, and Lehr completion Status are intentionally omitted from this first compact-list design and remain available in the Service editor. Text plus Description form one reliable Text-record tap target, Song remains a separate Song-record tap target, and the rest of the row opens the Service editor. Rows use compact spacing, thin dividers, and subtle press feedback; the toolbar scrolls normally rather than staying fixed. The desktop spreadsheet view is otherwise unchanged.
 
 Core screens:
 

@@ -31,6 +31,14 @@ button.nav-link {
   font-weight: 700;
 }
 
+.brand-mark .bi {
+  font-size: 1rem;
+}
+
+.min-width-0 {
+  min-width: 0;
+}
+
 .app-version {
   font-variant-numeric: tabular-nums;
 }
@@ -435,6 +443,10 @@ button.nav-link {
     padding-bottom: 0.5rem;
   }
 
+  .app-content-header p {
+    display: none;
+  }
+
   .app-content {
     padding-inline: 0.75rem;
     padding-bottom: 3rem;
@@ -456,6 +468,143 @@ button.nav-link {
   .mobile-song-list,
   .mobile-text-list {
     display: flex;
+  }
+
+  .register-toolbar {
+    padding: 0.625rem 0.75rem;
+  }
+
+  .mobile-register-toolbar .input-group,
+  .mobile-register-toolbar .form-select,
+  .mobile-register-toolbar .btn {
+    min-height: 38px;
+  }
+
+  .mobile-register-toolbar .form-control,
+  .mobile-register-toolbar .form-select,
+  .mobile-register-toolbar .btn {
+    font-size: 0.875rem;
+  }
+
+  .compact-mobile-register .mobile-service-row {
+    padding: 0.625rem 0.75rem;
+    text-align: left;
+  }
+
+  .compact-mobile-register .mobile-service-row:active {
+    background: var(--bs-primary-bg-subtle);
+  }
+
+  .mobile-service-heading {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .mobile-service-date {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--bs-secondary-color);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-service-heading .badge {
+    flex: 0 0 auto;
+    font-size: 0.68rem;
+  }
+
+  .mobile-text-record-link {
+    display: block;
+    width: 100%;
+    margin-top: 0.25rem;
+    padding-block: 0.1rem;
+  }
+
+  .mobile-text-title {
+    display: block;
+    overflow: hidden;
+    font-size: 0.98rem;
+    font-weight: 600;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-text-description {
+    display: -webkit-box;
+    margin-top: 0.2rem;
+    overflow: hidden;
+    color: var(--bs-secondary-color);
+    font-size: 0.82rem;
+    font-weight: 400;
+    line-height: 1.25;
+    text-decoration: none;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .mobile-service-meta {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 0.25rem;
+    color: var(--bs-secondary-color);
+    font-size: 0.8rem;
+    line-height: 1.2;
+  }
+
+  .mobile-service-preacher {
+    min-width: 0;
+    overflow: hidden;
+    flex: 0 1 auto;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-service-meta.has-both .mobile-service-preacher {
+    max-width: 40%;
+  }
+
+  .mobile-service-separator {
+    flex: 0 0 auto;
+  }
+
+  .mobile-song-link {
+    display: inline-flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 0.15rem;
+    font-size: inherit;
+    line-height: inherit;
+    vertical-align: baseline;
+  }
+
+  .mobile-song-link .bi {
+    flex: 0 0 auto;
+  }
+
+  .mobile-song-link span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .register-empty-state {
+    padding-block: 1.5rem !important;
+  }
+
+  .register-empty-state .bi {
+    font-size: 1.25rem !important;
+    margin-bottom: 0.35rem !important;
   }
 
   .mobile-tabbar {
