@@ -81,6 +81,35 @@ CREATE TABLE IF NOT EXISTS lehr_gebet_links (
   CHECK (lehr_service_id <> gebet_service_id)
 );
 
+-- Lehr Progress separates a teaching's start/continuation history from the
+-- service type. A Lehr or a Gebet may start or continue the same progress.
+CREATE TABLE IF NOT EXISTS lehr_progress (
+  id TEXT PRIMARY KEY,
+  text_id TEXT NOT NULL REFERENCES texts(id) ON DELETE RESTRICT,
+  start_service_id TEXT NOT NULL UNIQUE REFERENCES services(id) ON DELETE RESTRICT,
+  status TEXT CHECK (status IN ('IN_PROGRESS', 'FINISHED')),
+  completion_service_id TEXT REFERENCES services(id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lehr_progress_services (
+  progress_id TEXT NOT NULL REFERENCES lehr_progress(id) ON DELETE CASCADE,
+  service_id TEXT NOT NULL UNIQUE REFERENCES services(id) ON DELETE RESTRICT,
+  sequence_number INTEGER NOT NULL CHECK (sequence_number > 0),
+  intent TEXT NOT NULL CHECK (intent IN ('START', 'CONTINUE', 'AUTO', 'LEGACY')),
+  role_visible INTEGER NOT NULL DEFAULT 1 CHECK (role_visible IN (0, 1)),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (progress_id, service_id),
+  UNIQUE (progress_id, sequence_number)
+);
+
+CREATE TABLE IF NOT EXISTS app_metadata (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TRIGGER IF NOT EXISTS validate_lehr_gebet_link_insert
 BEFORE INSERT ON lehr_gebet_links
 BEGIN
@@ -164,5 +193,9 @@ CREATE INDEX IF NOT EXISTS service_attachments_owner_idx ON service_attachments(
 CREATE INDEX IF NOT EXISTS vorrade_attachments_owner_idx ON vorrade_attachments(vorrade_id);
 CREATE INDEX IF NOT EXISTS service_imports_service_idx ON service_imports(service_id);
 CREATE INDEX IF NOT EXISTS text_attachments_owner_idx ON text_attachments(text_id);
+CREATE INDEX IF NOT EXISTS lehr_progress_text_status_idx
+  ON lehr_progress(text_id, status);
+CREATE INDEX IF NOT EXISTS lehr_progress_services_progress_idx
+  ON lehr_progress_services(progress_id, sequence_number);
 
-PRAGMA user_version = 7;
+PRAGMA user_version = 8;

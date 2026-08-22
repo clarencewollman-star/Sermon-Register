@@ -270,7 +270,8 @@ def initialize_database():
     UPLOADS_PATH.mkdir(parents=True, exist_ok=True)
     with connect() as con:
         ensure_schema(con, DB_PATH)
-        backfill_gebet_links(con)
+        seed_legacy_lehr_progress(con)
+        run_one_time_status_cleanup(con, DB_PATH)
         con.commit()
 
 
@@ -299,6 +300,12 @@ def master_id(con, table, value_column, value, extra=None):
 def optional_master_id(con, table, value_column, value, extra=None):
     value = str(value or "").strip()
     return master_id(con, table, value_column, value, extra) if value else None
+
+
+def as_bool(value):
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def normalize_tags(value):
@@ -330,17 +337,21 @@ def text_rows(con):
     sql = """
     SELECT texts.id, texts.text, texts.description, texts.tags,
            texts.scripture_reference, texts.songs_for_text, texts.notes,
-           COUNT(DISTINCT CASE
-             WHEN services.service_type = 'LEHR' THEN services.id
-           END) AS times_used,
-           COUNT(DISTINCT services.id) AS service_count,
-           MAX(services.service_date) AS last_used,
-           COUNT(DISTINCT attachments.id) AS attachment_count
+           (SELECT COUNT(*)
+              FROM lehr_progress progress
+             WHERE progress.text_id = texts.id) AS times_used,
+           (SELECT COUNT(*)
+              FROM services
+             WHERE services.text_id = texts.id) AS service_count,
+           (SELECT MAX(start_service.service_date)
+              FROM lehr_progress progress
+              JOIN services start_service
+                ON start_service.id = progress.start_service_id
+             WHERE progress.text_id = texts.id) AS last_used,
+           (SELECT COUNT(*)
+              FROM text_attachments attachments
+             WHERE attachments.text_id = texts.id) AS attachment_count
       FROM texts
- LEFT JOIN services ON services.text_id = texts.id
- LEFT JOIN text_attachments attachments ON attachments.text_id = texts.id
-  GROUP BY texts.id, texts.text, texts.description, texts.tags,
-           texts.scripture_reference, texts.songs_for_text, texts.notes
   ORDER BY texts.text COLLATE NOCASE
     """
     return [dict(row) for row in con.execute(sql)]
@@ -524,20 +535,583 @@ def set_gebet_lehr_link(con, gebet_id, lehr_id, lehr_status, stamp):
         sync_lehr_status_from_links(con, lehr_id, stamp)
 
 
+def metadata_value(con, key):
+    row = con.execute(
+        "SELECT value FROM app_metadata WHERE key = ?", (key,)
+    ).fetchone()
+    return row["value"] if row else None
+
+
+def set_metadata(con, key, value):
+    con.execute(
+        """INSERT INTO app_metadata(key, value, updated_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE
+             SET value = excluded.value, updated_at = excluded.updated_at""",
+        (key, value, now()),
+    )
+
+
+def seed_legacy_lehr_progress(con):
+    """Copy existing relationships without changing historical service records."""
+    if metadata_value(con, "lehr_progress_seed_v1"):
+        return
+    stamp = now()
+    lehrs = con.execute(
+        """SELECT id, text_id, lehr_status, created_at
+             FROM services
+            WHERE service_type = 'LEHR'
+            ORDER BY service_date, created_at"""
+    ).fetchall()
+    for lehr in lehrs:
+        progress = con.execute(
+            "SELECT id FROM lehr_progress WHERE start_service_id = ?",
+            (lehr["id"],),
+        ).fetchone()
+        progress_id = progress["id"] if progress else str(uuid.uuid4())
+        if not progress:
+            con.execute(
+                """INSERT INTO lehr_progress
+                   (id, text_id, start_service_id, status,
+                    completion_service_id, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, NULL, ?, ?)""",
+                (
+                    progress_id,
+                    lehr["text_id"],
+                    lehr["id"],
+                    lehr["lehr_status"],
+                    lehr["created_at"] or stamp,
+                    stamp,
+                ),
+            )
+        con.execute(
+            """INSERT OR IGNORE INTO lehr_progress_services
+               (progress_id, service_id, sequence_number, intent,
+                role_visible, created_at)
+               VALUES (?, ?, 1, 'START', 1, ?)""",
+            (progress_id, lehr["id"], lehr["created_at"] or stamp),
+        )
+        links = con.execute(
+            """SELECT link.gebet_service_id, link.sequence_number,
+                      link.lehr_status_after, link.created_at
+                 FROM lehr_gebet_links link
+                WHERE link.lehr_service_id = ?
+                ORDER BY link.sequence_number""",
+            (lehr["id"],),
+        ).fetchall()
+        completion_id = None
+        for index, link in enumerate(links, start=2):
+            con.execute(
+                """INSERT OR IGNORE INTO lehr_progress_services
+                   (progress_id, service_id, sequence_number, intent,
+                    role_visible, created_at)
+                   VALUES (?, ?, ?, 'LEGACY', 0, ?)""",
+                (progress_id, link["gebet_service_id"], index, link["created_at"]),
+            )
+            if link["lehr_status_after"] == "FINISHED":
+                completion_id = link["gebet_service_id"]
+        if completion_id and lehr["lehr_status"] == "FINISHED":
+            con.execute(
+                """UPDATE lehr_progress
+                      SET completion_service_id = ?, updated_at = ?
+                    WHERE id = ?""",
+                (completion_id, stamp, progress_id),
+            )
+    set_metadata(con, "lehr_progress_seed_v1", stamp)
+    con.commit()
+
+
+def status_cleanup_backup(database_path, connection):
+    backup_dir = database_path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+    backup_path = backup_dir / f"sermon-register-before-status-cleanup-{stamp}.db"
+    with sqlite3.connect(backup_path) as backup:
+        connection.backup(backup)
+    return backup_path
+
+
+def run_one_time_status_cleanup(con, database_path=DB_PATH):
+    if metadata_value(con, "old_status_cleanup_v1"):
+        return
+    con.commit()
+    try:
+        backup_path = status_cleanup_backup(database_path, con)
+    except Exception as exc:
+        print(
+            f"[database] Status cleanup skipped because backup failed: {exc}",
+            flush=True,
+        )
+        return
+    cutoff = con.execute("SELECT date('now', '-2 months')").fetchone()[0]
+    old_progress = con.execute(
+        """SELECT progress.id, progress.start_service_id
+             FROM lehr_progress progress
+            WHERE COALESCE(
+                    (SELECT MAX(service.service_date)
+                       FROM lehr_progress_services member
+                       JOIN services service ON service.id = member.service_id
+                      WHERE member.progress_id = progress.id),
+                    '0000-00-00'
+                  ) < ?""",
+        (cutoff,),
+    ).fetchall()
+    stamp = now()
+    for progress in old_progress:
+        con.execute(
+            """UPDATE lehr_progress
+                  SET status = NULL, completion_service_id = NULL, updated_at = ?
+                WHERE id = ?""",
+            (stamp, progress["id"]),
+        )
+        con.execute(
+            "UPDATE services SET lehr_status = NULL, updated_at = ? WHERE id = ?",
+            (stamp, progress["start_service_id"]),
+        )
+        con.execute(
+            """UPDATE lehr_progress_services
+                  SET role_visible = CASE WHEN sequence_number = 1 THEN role_visible ELSE 0 END
+                WHERE progress_id = ?""",
+            (progress["id"],),
+        )
+        con.execute(
+            """UPDATE lehr_gebet_links
+                  SET lehr_status_after = NULL
+                WHERE lehr_service_id = ?""",
+            (progress["start_service_id"],),
+        )
+    set_metadata(
+        con,
+        "old_status_cleanup_v1",
+        json.dumps(
+            {
+                "cutoff": cutoff,
+                "backup": str(backup_path),
+                "clearedProgressRecords": len(old_progress),
+            }
+        ),
+    )
+    con.commit()
+    print(
+        f"[database] One-time status cleanup cleared {len(old_progress)} old records; "
+        f"backup: {backup_path}",
+        flush=True,
+    )
+
+
+def matching_progress(con, service_date, text_id, service_id=None):
+    row = con.execute(
+        """WITH activity AS (
+               SELECT progress.id, progress.start_service_id,
+                      MAX(service.service_date) AS last_date,
+                      MAX(CASE WHEN service.service_date = ?
+                               THEN service.created_at ELSE '' END) AS same_day_order
+                 FROM lehr_progress progress
+                 JOIN lehr_progress_services member
+                   ON member.progress_id = progress.id
+                 JOIN services service ON service.id = member.service_id
+                WHERE progress.text_id = ?
+                  AND progress.status = 'IN_PROGRESS'
+                  AND member.service_id <> COALESCE(?, '')
+                  AND service.service_date <= ?
+                GROUP BY progress.id, progress.start_service_id
+           )
+           SELECT activity.id, activity.start_service_id,
+                  activity.last_date, start_service.service_type,
+                  texts.text AS start_text
+             FROM activity
+             JOIN services start_service ON start_service.id = activity.start_service_id
+             JOIN texts ON texts.id = start_service.text_id
+            WHERE activity.last_date >= date(?, '-9 months')
+            ORDER BY activity.last_date DESC, activity.same_day_order DESC
+            LIMIT 1""",
+        (service_date, text_id, service_id, service_date, service_date),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def progress_members(con, progress_id):
+    return con.execute(
+        """SELECT member.service_id, member.sequence_number, member.intent,
+                  member.role_visible, service.service_date, service.service_type,
+                  text.text
+             FROM lehr_progress_services member
+             JOIN services service ON service.id = member.service_id
+             JOIN texts text ON text.id = service.text_id
+            WHERE member.progress_id = ?
+            ORDER BY service.service_date, service.created_at, member.sequence_number""",
+        (progress_id,),
+    ).fetchall()
+
+
+def resequence_progress(con, progress_id):
+    members = progress_members(con, progress_id)
+    for sequence, member in enumerate(members, start=1):
+        con.execute(
+            """UPDATE lehr_progress_services SET sequence_number = ?
+                WHERE progress_id = ? AND service_id = ?""",
+            (1000000 + sequence, progress_id, member["service_id"]),
+        )
+    for sequence, member in enumerate(members, start=1):
+        con.execute(
+            """UPDATE lehr_progress_services SET sequence_number = ?
+                WHERE progress_id = ? AND service_id = ?""",
+            (sequence, progress_id, member["service_id"]),
+        )
+
+
+def create_progress(con, service_id, text_id, status, intent, stamp):
+    progress_id = str(uuid.uuid4())
+    con.execute(
+        """INSERT INTO lehr_progress
+           (id, text_id, start_service_id, status, completion_service_id,
+            created_at, updated_at)
+           VALUES (?, ?, ?, ?, NULL, ?, ?)""",
+        (progress_id, text_id, service_id, status, stamp, stamp),
+    )
+    con.execute(
+        """INSERT INTO lehr_progress_services
+           (progress_id, service_id, sequence_number, intent, role_visible, created_at)
+           VALUES (?, ?, 1, ?, 1, ?)""",
+        (progress_id, service_id, intent, stamp),
+    )
+    return progress_id
+
+
+def add_progress_member(con, progress_id, service_id, intent, stamp):
+    sequence = con.execute(
+        """SELECT COALESCE(MAX(sequence_number), 0) + 1
+             FROM lehr_progress_services WHERE progress_id = ?""",
+        (progress_id,),
+    ).fetchone()[0]
+    con.execute(
+        """INSERT INTO lehr_progress_services
+           (progress_id, service_id, sequence_number, intent, role_visible, created_at)
+           VALUES (?, ?, ?, ?, 1, ?)""",
+        (progress_id, service_id, sequence, intent, stamp),
+    )
+    resequence_progress(con, progress_id)
+
+
+def set_progress_status(con, progress_id, status, completion_service_id, stamp,
+                        reveal_history=False):
+    if status not in (None, "IN_PROGRESS", "FINISHED"):
+        raise ValueError("Invalid Lehr status")
+    if status != "FINISHED":
+        completion_service_id = None
+    if completion_service_id:
+        owner = con.execute(
+            """SELECT 1 FROM lehr_progress_services
+                WHERE progress_id = ? AND service_id = ?""",
+            (progress_id, completion_service_id),
+        ).fetchone()
+        if not owner:
+            raise ValueError("The completing service is not part of this Lehr")
+    con.execute(
+        """UPDATE lehr_progress
+              SET status = ?, completion_service_id = ?, updated_at = ?
+            WHERE id = ?""",
+        (status, completion_service_id, stamp, progress_id),
+    )
+    if reveal_history:
+        con.execute(
+            "UPDATE lehr_progress_services SET role_visible = 1 WHERE progress_id = ?",
+            (progress_id,),
+        )
+    start = con.execute(
+        """SELECT service.id, service.service_type
+             FROM lehr_progress progress
+             JOIN services service ON service.id = progress.start_service_id
+            WHERE progress.id = ?""",
+        (progress_id,),
+    ).fetchone()
+    if start and start["service_type"] == "LEHR":
+        con.execute(
+            "UPDATE services SET lehr_status = ?, updated_at = ? WHERE id = ?",
+            (status, stamp, start["id"]),
+        )
+
+
+def assign_new_service_progress(con, service_id, service_type, service_date,
+                                text_id, intent, status, completed, stamp):
+    intent = str(intent or "").upper()
+    completed = bool(completed)
+    if service_type == "LEHR" and intent == "CONTINUE":
+        match = matching_progress(con, service_date, text_id, service_id)
+        if not match:
+            raise ValueError(
+                "No In-Progress Lehr With This Text Was Found Within Nine Months."
+            )
+        progress_id = match["id"]
+        add_progress_member(con, progress_id, service_id, "CONTINUE", stamp)
+        if completed:
+            set_progress_status(
+                con, progress_id, "FINISHED", service_id, stamp, reveal_history=True
+            )
+        return progress_id
+    if service_type == "GEBET":
+        match = matching_progress(con, service_date, text_id, service_id)
+        if match:
+            progress_id = match["id"]
+            add_progress_member(con, progress_id, service_id, "AUTO", stamp)
+        else:
+            progress_id = create_progress(
+                con, service_id, text_id, "IN_PROGRESS", "AUTO", stamp
+            )
+        if completed:
+            set_progress_status(
+                con, progress_id, "FINISHED", service_id, stamp, reveal_history=True
+            )
+        return progress_id
+    normalized_status = status or "IN_PROGRESS"
+    progress_id = create_progress(
+        con, service_id, text_id, normalized_status, "START", stamp
+    )
+    if normalized_status == "FINISHED":
+        set_progress_status(
+            con, progress_id, "FINISHED", service_id, stamp, reveal_history=True
+        )
+    return progress_id
+
+
+def latest_progress_service_id(con, progress_id):
+    row = con.execute(
+        """SELECT service.id
+             FROM lehr_progress_services member
+             JOIN services service ON service.id = member.service_id
+            WHERE member.progress_id = ?
+            ORDER BY service.service_date DESC, service.created_at DESC,
+                     member.sequence_number DESC
+            LIMIT 1""",
+        (progress_id,),
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def move_progress_member(con, service_id, target_progress_id, intent, stamp):
+    current = con.execute(
+        """SELECT progress_id FROM lehr_progress_services
+            WHERE service_id = ?""",
+        (service_id,),
+    ).fetchone()
+    if current and current["progress_id"] == target_progress_id:
+        con.execute(
+            """UPDATE lehr_progress_services
+                  SET intent = ?, role_visible = 1
+                WHERE service_id = ?""",
+            (intent, service_id),
+        )
+        return
+    if current:
+        old_progress_id = current["progress_id"]
+        old = con.execute(
+            "SELECT completion_service_id FROM lehr_progress WHERE id = ?",
+            (old_progress_id,),
+        ).fetchone()
+        con.execute(
+            "DELETE FROM lehr_progress_services WHERE service_id = ?", (service_id,)
+        )
+        if old and old["completion_service_id"] == service_id:
+            set_progress_status(con, old_progress_id, "IN_PROGRESS", None, stamp)
+        resequence_progress(con, old_progress_id)
+    add_progress_member(con, target_progress_id, service_id, intent, stamp)
+
+
+def update_service_progress(con, service_id, service_type, service_date, text_id,
+                            intent, status, completed, status_changed,
+                            relationship_changed, stamp):
+    membership = con.execute(
+        """SELECT member.progress_id, member.intent,
+                  progress.start_service_id, progress.status,
+                  progress.completion_service_id
+             FROM lehr_progress_services member
+             JOIN lehr_progress progress ON progress.id = member.progress_id
+            WHERE member.service_id = ?""",
+        (service_id,),
+    ).fetchone()
+    if not membership:
+        return assign_new_service_progress(
+            con, service_id, service_type, service_date, text_id,
+            intent, status, completed, stamp
+        )
+
+    progress_id = membership["progress_id"]
+    is_start = membership["start_service_id"] == service_id
+    if (
+        status_changed
+        and not completed
+        and membership["completion_service_id"] == service_id
+    ):
+        set_progress_status(con, progress_id, "IN_PROGRESS", None, stamp)
+    desired_intent = "AUTO" if service_type == "GEBET" else str(
+        intent or membership["intent"] or "START"
+    ).upper()
+    if service_type == "LEHR" and desired_intent not in ("START", "CONTINUE"):
+        desired_intent = "START"
+
+    if is_start and desired_intent == "CONTINUE":
+        match = matching_progress(con, service_date, text_id, service_id)
+        if not match or match["id"] == progress_id:
+            raise ValueError(
+                "No In-Progress Lehr With This Text Was Found Within Nine Months."
+            )
+        old_members = progress_members(con, progress_id)
+        old_completion = membership["completion_service_id"]
+        con.execute(
+            "DELETE FROM lehr_progress_services WHERE progress_id = ?", (progress_id,)
+        )
+        con.execute("DELETE FROM lehr_progress WHERE id = ?", (progress_id,))
+        for old_member in old_members:
+            member_intent = (
+                "CONTINUE" if old_member["service_id"] == service_id
+                else old_member["intent"] if old_member["intent"] != "START" else "AUTO"
+            )
+            add_progress_member(
+                con, match["id"], old_member["service_id"], member_intent, stamp
+            )
+            con.execute(
+                """UPDATE lehr_progress_services SET role_visible = ?
+                    WHERE service_id = ?""",
+                (1 if old_member["service_id"] == service_id else old_member["role_visible"],
+                 old_member["service_id"]),
+            )
+        if old_completion:
+            set_progress_status(
+                con, match["id"], "FINISHED", old_completion, stamp,
+                reveal_history=True
+            )
+        elif completed:
+            set_progress_status(
+                con, match["id"], "FINISHED", service_id, stamp,
+                reveal_history=True
+            )
+        return match["id"]
+
+    if is_start:
+        con.execute(
+            """UPDATE lehr_progress
+                  SET text_id = ?, updated_at = ?
+                WHERE id = ?""",
+            (text_id, stamp, progress_id),
+        )
+        con.execute(
+            """UPDATE lehr_progress_services
+                  SET intent = ?, role_visible = 1
+                WHERE service_id = ?""",
+            ("AUTO" if service_type == "GEBET" else "START", service_id),
+        )
+        requested_status = status if status in (None, "IN_PROGRESS", "FINISHED") else None
+        if status_changed and (requested_status == "FINISHED" or completed):
+            completion_id = latest_progress_service_id(con, progress_id) or service_id
+            set_progress_status(
+                con, progress_id, "FINISHED", completion_id, stamp,
+                reveal_history=True
+            )
+        elif status_changed and requested_status == "IN_PROGRESS":
+            set_progress_status(con, progress_id, "IN_PROGRESS", None, stamp)
+        elif status_changed and requested_status is None and membership["status"] is None:
+            set_progress_status(con, progress_id, None, None, stamp)
+        resequence_progress(con, progress_id)
+        return progress_id
+
+    if not relationship_changed:
+        con.execute(
+            """UPDATE lehr_progress_services
+                  SET intent = ?, role_visible = 1
+                WHERE service_id = ?""",
+            (desired_intent, service_id),
+        )
+        if status_changed and completed:
+            set_progress_status(
+                con, progress_id, "FINISHED", service_id, stamp,
+                reveal_history=True
+            )
+        return progress_id
+
+    if service_type == "LEHR" and desired_intent == "START":
+        old_progress_id = progress_id
+        was_completion = membership["completion_service_id"] == service_id
+        con.execute(
+            "DELETE FROM lehr_progress_services WHERE service_id = ?", (service_id,)
+        )
+        if was_completion:
+            set_progress_status(con, old_progress_id, "IN_PROGRESS", None, stamp)
+        resequence_progress(con, old_progress_id)
+        normalized_status = status or "IN_PROGRESS"
+        return create_progress(
+            con, service_id, text_id, normalized_status, "START", stamp
+        )
+
+    match = matching_progress(con, service_date, text_id, service_id)
+    if not match:
+        if service_type == "LEHR":
+            raise ValueError(
+                "No In-Progress Lehr With This Text Was Found Within Nine Months."
+            )
+        old_progress_id = progress_id
+        was_completion = membership["completion_service_id"] == service_id
+        con.execute(
+            "DELETE FROM lehr_progress_services WHERE service_id = ?", (service_id,)
+        )
+        if was_completion:
+            set_progress_status(con, old_progress_id, "IN_PROGRESS", None, stamp)
+        resequence_progress(con, old_progress_id)
+        new_progress = create_progress(
+            con, service_id, text_id, "IN_PROGRESS", "AUTO", stamp
+        )
+        if completed:
+            set_progress_status(
+                con, new_progress, "FINISHED", service_id, stamp,
+                reveal_history=True
+            )
+        return new_progress
+
+    move_progress_member(con, service_id, match["id"], desired_intent, stamp)
+    if status_changed and completed:
+        set_progress_status(
+            con, match["id"], "FINISHED", service_id, stamp,
+            reveal_history=True
+        )
+    elif status_changed and membership["completion_service_id"] == service_id:
+        set_progress_status(con, match["id"], "IN_PROGRESS", None, stamp)
+    return match["id"]
+
+
+def progress_role_label(row):
+    if not row.get("progress_id"):
+        return None
+    if not row.get("progress_role_visible") and row.get("service_type") == "GEBET":
+        return None
+    is_start = row.get("progress_start_service_id") == row.get("id")
+    if is_start and row.get("service_type") == "LEHR":
+        return row.get("progress_status")
+    if row.get("progress_completion_service_id") == row.get("id"):
+        return "COMPLETED_LEHR"
+    if is_start:
+        return "STARTED_LEHR"
+    return "CONTINUED"
+
+
 def service_rows(con):
     sql = """
-    SELECT s.id, s.service_date, s.service_type, s.notes, s.lehr_status,
+    SELECT s.id, s.service_date, s.service_type, s.notes,
+           COALESCE(progress.status, s.lehr_status) AS lehr_status,
            COALESCE(songs.title, '') AS song,
            COALESCE(song_person.name, '') AS song_by,
            texts.text AS text_title,
            COALESCE(text_person.name, '') AS text_by,
            vorraden.title AS vorrade,
            vorrade_person.name AS vorrade_by,
-           continuation.lehr_service_id AS linked_lehr_id,
-           linked_lehr.service_date AS linked_lehr_date,
-           linked_text.text AS linked_lehr_text,
-           continuation.lehr_status_after AS linked_lehr_status,
-           linked_lehr.lehr_status AS linked_lehr_current_status
+           progress.id AS progress_id,
+           member.intent AS progress_intent,
+           member.role_visible AS progress_role_visible,
+           progress.status AS progress_status,
+           progress.start_service_id AS progress_start_service_id,
+           progress.completion_service_id AS progress_completion_service_id,
+           start_service.service_date AS linked_lehr_date,
+           start_text.text AS linked_lehr_text,
+           progress.start_service_id AS linked_lehr_id,
+           progress.status AS linked_lehr_current_status
       FROM services s
  LEFT JOIN songs ON songs.id = s.song_id
  LEFT JOIN people song_person ON song_person.id = s.song_by_person_id
@@ -545,12 +1119,51 @@ def service_rows(con):
  LEFT JOIN people text_person ON text_person.id = s.text_by_person_id
  LEFT JOIN vorraden ON vorraden.id = s.vorrade_id
  LEFT JOIN people vorrade_person ON vorrade_person.id = s.vorrade_by_person_id
- LEFT JOIN lehr_gebet_links continuation ON continuation.gebet_service_id = s.id
- LEFT JOIN services linked_lehr ON linked_lehr.id = continuation.lehr_service_id
- LEFT JOIN texts linked_text ON linked_text.id = linked_lehr.text_id
+ LEFT JOIN lehr_progress_services member ON member.service_id = s.id
+ LEFT JOIN lehr_progress progress ON progress.id = member.progress_id
+ LEFT JOIN services start_service ON start_service.id = progress.start_service_id
+ LEFT JOIN texts start_text ON start_text.id = progress.text_id
   ORDER BY s.service_date DESC, s.created_at DESC
     """
-    return [dict(row) for row in con.execute(sql)]
+    rows = [dict(row) for row in con.execute(sql)]
+    history_by_progress = {}
+    for history_row in con.execute(
+        """SELECT member.progress_id, member.service_id, member.role_visible,
+                  service.service_date, service.service_type,
+                  progress.start_service_id, progress.completion_service_id
+             FROM lehr_progress_services member
+             JOIN services service ON service.id = member.service_id
+             JOIN lehr_progress progress ON progress.id = member.progress_id
+            ORDER BY member.progress_id, service.service_date,
+                     service.created_at, member.sequence_number"""
+    ):
+        visible = bool(history_row["role_visible"])
+        is_start = history_row["service_id"] == history_row["start_service_id"]
+        role = None
+        if visible or history_row["service_type"] == "LEHR":
+            if history_row["service_id"] == history_row["completion_service_id"]:
+                role = "COMPLETED_LEHR"
+            elif is_start and history_row["service_type"] == "GEBET":
+                role = "STARTED_LEHR"
+            elif not is_start:
+                role = "CONTINUED"
+        history_by_progress.setdefault(history_row["progress_id"], []).append(
+            {
+                "id": history_row["service_id"],
+                "date": history_row["service_date"],
+                "type": history_row["service_type"],
+                "role": role,
+            }
+        )
+    for row in rows:
+        row["status_label"] = progress_role_label(row)
+        row["linked_lehr_status"] = (
+            "FINISHED"
+            if row["progress_completion_service_id"] == row["id"]
+            else "IN_PROGRESS" if row["progress_id"] else None
+        )
+        row["progress_history"] = history_by_progress.get(row["progress_id"], [])
+    return rows
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -840,6 +1453,23 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/people":
             with connect() as con:
                 return self.json(people_rows(con))
+        if path == "/progress-match":
+            parameters = parse_qs(parsed.query)
+            service_date = str(parameters.get("date", [""])[0]).strip()
+            text_value = str(parameters.get("text", [""])[0]).strip()
+            service_id = str(parameters.get("serviceId", [""])[0]).strip() or None
+            if not service_date or not text_value:
+                return self.json({"match": None})
+            with connect() as con:
+                text_row = con.execute(
+                    "SELECT id FROM texts WHERE text = ? COLLATE NOCASE",
+                    (text_value,),
+                ).fetchone()
+                match = (
+                    matching_progress(con, service_date, text_row["id"], service_id)
+                    if text_row else None
+                )
+                return self.json({"match": match})
         if path == "/text-attachments":
             parameters = parse_qs(parsed.query)
             attachment_id = str(parameters.get("fileId", [""])[0]).strip()
@@ -898,9 +1528,16 @@ class Handler(BaseHTTPRequestHandler):
                             con, "people", "name", body["vorradeBy"].strip()
                         )
                 if body["type"] == "LEHR":
-                    lehr_status = str(body.get("status", "")).strip() or None
+                    progress_intent = str(
+                        body.get("progressIntent", "START")
+                    ).strip().upper()
+                    if progress_intent not in ("START", "CONTINUE"):
+                        return self.json({"error": "Invalid Lehr progress choice"}, 400)
+                    lehr_status = str(body.get("status", "")).strip() or "IN_PROGRESS"
                     if lehr_status not in (None, "IN_PROGRESS", "FINISHED"):
                         return self.json({"error": "Invalid Lehr status"}, 400)
+                else:
+                    progress_intent = "AUTO"
                 service_id = str(uuid.uuid4())
                 stamp = now()
                 con.execute(
@@ -917,16 +1554,28 @@ class Handler(BaseHTTPRequestHandler):
                         str(body.get("notes", "")).strip() or None, stamp, stamp,
                     ),
                 )
-                if body["type"] == "GEBET":
-                    linked_lehr_id = matching_lehr_id(
-                        con, body["date"], text_id, service_id
-                    )
-                    set_gebet_lehr_link(
-                        con,
-                        service_id,
-                        linked_lehr_id,
-                        body.get("linkedLehrStatus"),
-                        stamp,
+                completed = as_bool(body.get("completed")) or (
+                    str(body.get("linkedLehrStatus", "")).strip() == "FINISHED"
+                )
+                progress_id = assign_new_service_progress(
+                    con,
+                    service_id,
+                    body["type"],
+                    body["date"],
+                    text_id,
+                    progress_intent,
+                    lehr_status,
+                    completed,
+                    stamp,
+                )
+                progress = con.execute(
+                    "SELECT start_service_id FROM lehr_progress WHERE id = ?",
+                    (progress_id,),
+                ).fetchone()
+                if body["type"] == "LEHR" and progress["start_service_id"] != service_id:
+                    con.execute(
+                        "UPDATE services SET lehr_status = NULL WHERE id = ?",
+                        (service_id,),
                     )
                 con.commit()
                 record = next(row for row in service_rows(con) if row["id"] == service_id)
@@ -955,7 +1604,14 @@ class Handler(BaseHTTPRequestHandler):
 
             with connect() as con:
                 existing = con.execute(
-                    "SELECT id, service_type FROM services WHERE id = ?", (body["id"],)
+                    """SELECT service.id, service.service_type,
+                              service.service_date, service.text_id,
+                              member.intent AS progress_intent
+                         FROM services service
+                    LEFT JOIN lehr_progress_services member
+                           ON member.service_id = service.id
+                        WHERE service.id = ?""",
+                    (body["id"],),
                 ).fetchone()
                 if not existing:
                     return self.json({"error": "Service not found"}, 404)
@@ -983,37 +1639,13 @@ class Handler(BaseHTTPRequestHandler):
                     lehr_status = str(body.get("status", "")).strip() or None
                     if lehr_status not in (None, "IN_PROGRESS", "FINISHED"):
                         return self.json({"error": "Invalid Lehr status"}, 400)
-
-                if existing["service_type"] == "LEHR" and body["type"] == "GEBET":
-                    continuation_count = con.execute(
-                        "SELECT COUNT(*) FROM lehr_gebet_links WHERE lehr_service_id = ?",
-                        (body["id"],),
-                    ).fetchone()[0]
-                    if continuation_count:
-                        return self.json(
-                            {
-                                "error": (
-                                    "This Lehr has linked Gebets and cannot be changed "
-                                    "to a Gebet"
-                                )
-                            },
-                            400,
-                        )
-                if body["type"] == "LEHR":
-                    previous_link = con.execute(
-                        """SELECT lehr_service_id
-                             FROM lehr_gebet_links
-                            WHERE gebet_service_id = ?""",
-                        (body["id"],),
-                    ).fetchone()
-                    con.execute(
-                        "DELETE FROM lehr_gebet_links WHERE gebet_service_id = ?",
-                        (body["id"],),
-                    )
-                    if previous_link:
-                        sync_lehr_status_from_links(
-                            con, previous_link["lehr_service_id"], now()
-                        )
+                    progress_intent = str(
+                        body.get("progressIntent", "START")
+                    ).strip().upper()
+                    if progress_intent not in ("START", "CONTINUE"):
+                        return self.json({"error": "Invalid Lehr progress choice"}, 400)
+                else:
+                    progress_intent = "AUTO"
 
                 stamp = now()
                 con.execute(
@@ -1030,16 +1662,39 @@ class Handler(BaseHTTPRequestHandler):
                         stamp, body["id"],
                     ),
                 )
-                if body["type"] == "GEBET":
-                    linked_lehr_id = matching_lehr_id(
-                        con, body["date"], text_id, body["id"]
-                    )
-                    set_gebet_lehr_link(
-                        con,
-                        body["id"],
-                        linked_lehr_id,
-                        body.get("linkedLehrStatus"),
-                        stamp,
+                completed = as_bool(body.get("completed")) or (
+                    str(body.get("linkedLehrStatus", "")).strip() == "FINISHED"
+                )
+                progress_id = update_service_progress(
+                    con,
+                    body["id"],
+                    body["type"],
+                    body["date"],
+                    text_id,
+                    progress_intent,
+                    lehr_status,
+                    completed,
+                    as_bool(body.get("statusChanged")),
+                    (
+                        existing["service_type"] != body["type"]
+                        or existing["service_date"] != body["date"]
+                        or existing["text_id"] != text_id
+                        or (
+                            body["type"] == "LEHR"
+                            and existing["progress_intent"] not in (None, progress_intent)
+                        )
+                    ),
+                    stamp,
+                )
+                membership = con.execute(
+                    """SELECT progress.start_service_id
+                         FROM lehr_progress progress WHERE progress.id = ?""",
+                    (progress_id,),
+                ).fetchone()
+                if body["type"] == "LEHR" and membership and membership["start_service_id"] != body["id"]:
+                    con.execute(
+                        "UPDATE services SET lehr_status = NULL WHERE id = ?",
+                        (body["id"],),
                     )
                 con.commit()
                 record = next(row for row in service_rows(con) if row["id"] == body["id"])
@@ -1126,19 +1781,45 @@ class Handler(BaseHTTPRequestHandler):
                 service = con.execute(
                     "SELECT service_type FROM services WHERE id = ?", (service_id,)
                 ).fetchone()
-                if service and service["service_type"] == "GEBET":
-                    link = con.execute(
-                        """SELECT lehr_service_id
-                             FROM lehr_gebet_links
-                            WHERE gebet_service_id = ?""",
+                membership = con.execute(
+                    """SELECT member.progress_id, progress.start_service_id,
+                              progress.completion_service_id,
+                              (SELECT COUNT(*) FROM lehr_progress_services count_member
+                                WHERE count_member.progress_id = member.progress_id) AS member_count
+                         FROM lehr_progress_services member
+                         JOIN lehr_progress progress ON progress.id = member.progress_id
+                        WHERE member.service_id = ?""",
+                    (service_id,),
+                ).fetchone()
+                if membership and membership["start_service_id"] == service_id and membership["member_count"] > 1:
+                    return self.json(
+                        {
+                            "error": (
+                                "This Service Starts A Lehr With Continuations And "
+                                "Cannot Be Deleted."
+                            )
+                        },
+                        409,
+                    )
+                if membership:
+                    progress_id = membership["progress_id"]
+                    con.execute(
+                        "DELETE FROM lehr_progress_services WHERE service_id = ?",
                         (service_id,),
-                    ).fetchone()
+                    )
+                    if membership["start_service_id"] == service_id:
+                        con.execute("DELETE FROM lehr_progress WHERE id = ?", (progress_id,))
+                    else:
+                        if membership["completion_service_id"] == service_id:
+                            set_progress_status(
+                                con, progress_id, "IN_PROGRESS", None, now()
+                            )
+                        resequence_progress(con, progress_id)
+                if service and service["service_type"] == "GEBET":
                     con.execute(
                         "DELETE FROM lehr_gebet_links WHERE gebet_service_id = ?",
                         (service_id,),
                     )
-                    if link:
-                        sync_lehr_status_from_links(con, link["lehr_service_id"], now())
                 deleted = con.execute(
                     "DELETE FROM services WHERE id = ?", (service_id,)
                 )

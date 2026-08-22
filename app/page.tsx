@@ -27,11 +27,23 @@ type Service = {
   vorrade: string;
   vorradeBy: string;
   status: string;
+  progressStatus: "" | "In Progress" | "Completed";
+  progressIntent: "START" | "CONTINUE" | "AUTO" | "LEGACY" | "";
+  progressStartId: string;
+  completionServiceId: string;
+  progressHistory: ProgressHistoryItem[];
   linkedLehrId: string;
   linkedLehrDate: string;
   linkedLehrText: string;
   linkedLehrCurrentStatus: string;
   notes: string;
+};
+
+type ProgressHistoryItem = {
+  id: string;
+  date: string;
+  type: "LEHR" | "GEBET";
+  role: "STARTED_LEHR" | "CONTINUED" | "COMPLETED_LEHR" | null;
 };
 
 type ApiService = {
@@ -50,6 +62,19 @@ type ApiService = {
   linked_lehr_text: string | null;
   linked_lehr_status: "IN_PROGRESS" | "FINISHED" | null;
   linked_lehr_current_status: "IN_PROGRESS" | "FINISHED" | null;
+  progress_id: string | null;
+  progress_intent: "START" | "CONTINUE" | "AUTO" | "LEGACY" | null;
+  progress_status: "IN_PROGRESS" | "FINISHED" | null;
+  progress_start_service_id: string | null;
+  progress_completion_service_id: string | null;
+  status_label:
+    | "IN_PROGRESS"
+    | "FINISHED"
+    | "STARTED_LEHR"
+    | "CONTINUED"
+    | "COMPLETED_LEHR"
+    | null;
+  progress_history: ProgressHistoryItem[];
   notes: string | null;
 };
 
@@ -122,6 +147,13 @@ type TextAttachment = {
 };
 
 type EntryType = "" | "Lehr" | "Gebet";
+type ProgressMatch = {
+  id: string;
+  start_service_id: string;
+  last_date: string;
+  service_type: "LEHR" | "GEBET";
+  start_text: string;
+};
 type SongSortField = "title" | "tags" | "timesUsed";
 type TextSortField = "text" | "tags" | "timesUsed" | "lastUsed";
 
@@ -142,6 +174,8 @@ const blankDraft = () => ({
   vorrade: "",
   vorradeBy: "",
   status: "",
+  progressIntent: "START",
+  completed: false,
   notes: "",
 });
 
@@ -150,11 +184,11 @@ const songsApiUrl = () => "/api/songs";
 const peopleApiUrl = () => "/api/people";
 const textsApiUrl = () => "/api/texts";
 const textAttachmentsApiUrl = () => "/api/text-attachments";
+const progressMatchApiUrl = () => "/api/progress-match";
 
 const fromApi = (row: ApiService): Service => {
   const date = new Date(`${row.service_date}T12:00:00`);
-  const status =
-    row.service_type === "LEHR" ? row.lehr_status : row.linked_lehr_status;
+  const label = row.status_label;
   return {
     id: row.id,
     dateValue: row.service_date,
@@ -179,17 +213,33 @@ const fromApi = (row: ApiService): Service => {
     vorrade: row.vorrade || "",
     vorradeBy: row.vorrade_by || "",
     status:
-      status === "IN_PROGRESS"
+      label === "IN_PROGRESS"
         ? "In Progress"
-        : status === "FINISHED"
-          ? "Finished"
+        : label === "FINISHED"
+          ? "Completed"
+          : label === "STARTED_LEHR"
+            ? "Started Lehr"
+            : label === "CONTINUED"
+              ? "Continued"
+              : label === "COMPLETED_LEHR"
+                ? "Completed Lehr"
+                : "",
+    progressStatus:
+      row.progress_status === "IN_PROGRESS"
+        ? "In Progress"
+        : row.progress_status === "FINISHED"
+          ? "Completed"
           : "",
+    progressIntent: row.progress_intent || "",
+    progressStartId: row.progress_start_service_id || "",
+    completionServiceId: row.progress_completion_service_id || "",
+    progressHistory: row.progress_history || [],
     linkedLehrId: row.linked_lehr_id || "",
     linkedLehrDate: row.linked_lehr_date || "",
     linkedLehrText: row.linked_lehr_text || "",
     linkedLehrCurrentStatus:
       row.linked_lehr_current_status === "FINISHED"
-        ? "Finished"
+        ? "Completed"
         : row.linked_lehr_current_status === "IN_PROGRESS"
           ? "In Progress"
           : "",
@@ -282,6 +332,16 @@ function firstLine(value: string) {
   return value.split(/\r?\n/, 1)[0].trim();
 }
 
+function statusBadgeClass(status: string) {
+  if (status === "Completed" || status === "Completed Lehr") {
+    return "text-bg-success";
+  }
+  if (status === "In Progress") return "text-bg-warning";
+  if (status === "Started Lehr") return "text-bg-primary";
+  if (status === "Continued") return "text-bg-info";
+  return "text-bg-secondary";
+}
+
 function arrayBufferToBase64(buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -301,11 +361,22 @@ export default function Home() {
   const [mobile, setMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [kind, setKind] = useState<EntryType>("");
+  const [newServiceDate, setNewServiceDate] = useState("");
+  const [newServiceText, setNewServiceText] = useState("");
+  const [newMatch, setNewMatch] = useState<ProgressMatch | null>(null);
+  const [newProgressIntent, setNewProgressIntent] = useState("START");
+  const [newCompleted, setNewCompleted] = useState(false);
+  const [newStatus, setNewStatus] = useState("IN_PROGRESS");
   const [editKind, setEditKind] = useState<EntryType>("");
+  const [editProgressIntent, setEditProgressIntent] = useState("START");
+  const [editProgressStatus, setEditProgressStatus] = useState("");
+  const [editCompleted, setEditCompleted] = useState(false);
+  const [editStatusChanged, setEditStatusChanged] = useState(false);
   const [selected, setSelected] = useState<Service | null>(null);
   const [rowVersion, setRowVersion] = useState(0);
   const [saveError, setSaveError] = useState("");
   const [draft, setDraft] = useState(blankDraft);
+  const [inlineMatch, setInlineMatch] = useState<ProgressMatch | null>(null);
   const [songs, setSongs] = useState<Song[]>([]);
   const [songQuery, setSongQuery] = useState("");
   const [songSort, setSongSort] = useState<SongSortField>("title");
@@ -337,6 +408,85 @@ export default function Home() {
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
+
+  useEffect(() => {
+    if (!draft.date || !draft.text) {
+      const clearTimer = window.setTimeout(() => {
+        setInlineMatch(null);
+        setDraft((current) => ({
+          ...current,
+          progressIntent: "START",
+          completed: false,
+        }));
+      }, 0);
+      return () => window.clearTimeout(clearTimer);
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const parameters = new URLSearchParams({ date: draft.date, text: draft.text });
+      fetch(`${progressMatchApiUrl()}?${parameters}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      })
+        .then((response) => response.json())
+        .then((result: { match?: ProgressMatch | null }) => {
+          const match = result.match || null;
+          setInlineMatch(match);
+          if (!match) {
+            setDraft((current) =>
+              current.progressIntent === "CONTINUE"
+                ? { ...current, progressIntent: "START", completed: false }
+                : current,
+            );
+          }
+        })
+        .catch((error: unknown) => {
+          if (!(error instanceof DOMException && error.name === "AbortError")) {
+            setInlineMatch(null);
+          }
+        });
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [draft.date, draft.text]);
+
+  useEffect(() => {
+    if (!newServiceDate || !newServiceText) {
+      const clearTimer = window.setTimeout(() => {
+        setNewMatch(null);
+        setNewProgressIntent("START");
+        setNewCompleted(false);
+      }, 0);
+      return () => window.clearTimeout(clearTimer);
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const parameters = new URLSearchParams({
+        date: newServiceDate,
+        text: newServiceText,
+      });
+      fetch(`${progressMatchApiUrl()}?${parameters}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      })
+        .then((response) => response.json())
+        .then((result: { match?: ProgressMatch | null }) => {
+          const match = result.match || null;
+          setNewMatch(match);
+          if (!match) {
+            setNewProgressIntent("START");
+            setNewCompleted(false);
+          }
+        })
+        .catch(() => setNewMatch(null));
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [newServiceDate, newServiceText]);
 
   useEffect(() => {
     fetch(textsApiUrl())
@@ -397,7 +547,15 @@ export default function Home() {
     () =>
       items.filter(
         (service) =>
-          (filter === "All Services" || service.type === filter) &&
+          (filter === "All Services" ||
+            (filter === "Lehr" && service.type === "Lehr") ||
+            (filter === "Gebet" && service.type === "Gebet") ||
+            (filter === "In Progress Lehrs" &&
+              service.progressStartId === service.id &&
+              service.progressStatus === "In Progress") ||
+            (filter === "Completed Lehrs" &&
+              service.progressStartId === service.id &&
+              service.progressStatus === "Completed")) &&
           (year === "All Years" || service.dateValue.startsWith(`${year}-`)) &&
           Object.values(service)
             .join(" ")
@@ -519,6 +677,12 @@ export default function Home() {
     setSongs(rows.map(songFromApi));
   }
 
+  async function refreshServices() {
+    const response = await fetch(apiUrl(), { cache: "no-store" });
+    if (!response.ok) throw new Error("Could Not Refresh Services");
+    setItems(((await response.json()) as ApiService[]).map(fromApi));
+  }
+
   async function refreshTexts() {
     const response = await fetch(textsApiUrl(), { cache: "no-store" });
     if (!response.ok) throw new Error("Could Not Refresh Texts");
@@ -555,15 +719,7 @@ export default function Home() {
     });
     const result = (await response.json()) as ApiService & { error?: string };
     if (!response.ok) throw new Error(result.error || "Could Not Save Service");
-    const created = fromApi(result);
-    setItems((current) => [
-      created,
-      ...current.map((service) =>
-        created.type === "Gebet" && service.id === created.linkedLehrId
-          ? { ...service, status: created.linkedLehrCurrentStatus }
-          : service,
-      ),
-    ]);
+    await refreshServices();
     void refreshSongs().catch(() => setSongError("The Songs Could Not Be Refreshed."));
     void refreshTexts().catch(() => setTextError("The Texts Could Not Be Refreshed."));
     void refreshPeople().catch(() =>
@@ -590,23 +746,16 @@ export default function Home() {
           textBy: String(form.get("editTextBy")),
           vorrade: String(form.get("editVorrade") || ""),
           vorradeBy: String(form.get("editVorradeBy") || ""),
-          status: String(form.get("editStatus") || ""),
-          linkedLehrStatus: String(form.get("editStatus") || ""),
+          status: editProgressStatus,
+          progressIntent: editKind === "Lehr" ? editProgressIntent : "AUTO",
+          completed: editCompleted,
+          statusChanged: editStatusChanged,
           notes: String(form.get("editNotes") || ""),
         }),
       });
       const result = (await response.json()) as ApiService & { error?: string };
       if (!response.ok) throw new Error(result.error || "Could Not Update Service");
-      const updated = fromApi(result);
-      setItems((current) =>
-        current.map((service) => {
-          if (service.id === updated.id) return updated;
-          if (updated.type === "Gebet" && service.id === updated.linkedLehrId) {
-            return { ...service, status: updated.linkedLehrCurrentStatus };
-          }
-          return service;
-        }),
-      );
+      await refreshServices();
       setSelected(null);
       void refreshSongs().catch(() => setSongError("The Songs Could Not Be Refreshed."));
       void refreshTexts().catch(() => setTextError("The Texts Could Not Be Refreshed."));
@@ -630,9 +779,7 @@ export default function Home() {
       });
       const result = (await response.json()) as { id?: string; error?: string };
       if (!response.ok) throw new Error(result.error || "Could Not Delete Service");
-      setItems((current) =>
-        current.filter((service) => service.id !== selected.id),
-      );
+      await refreshServices();
       setSelected(null);
       void refreshSongs().catch(() => setSongError("The Songs Could Not Be Refreshed."));
       void refreshTexts().catch(() => setTextError("The Texts Could Not Be Refreshed."));
@@ -996,12 +1143,18 @@ export default function Home() {
         textBy: String(form.get("textBy")),
         vorrade: String(form.get("vorrade") || ""),
         vorradeBy: String(form.get("vorradeBy") || ""),
-        status: String(form.get("status") || ""),
-        linkedLehrStatus: String(form.get("status") || ""),
+        status: kind === "Lehr" && newProgressIntent === "START" ? newStatus : "",
+        progressIntent: kind === "Lehr" ? newProgressIntent : "AUTO",
+        completed: newCompleted ? "true" : "false",
         notes: String(form.get("notes") || ""),
       });
       setOpen(false);
       setKind("");
+      setNewServiceDate("");
+      setNewServiceText("");
+      setNewProgressIntent("START");
+      setNewCompleted(false);
+      setNewStatus("IN_PROGRESS");
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could Not Save Service");
     }
@@ -1013,20 +1166,24 @@ export default function Home() {
     ) as HTMLFormElement | null;
     if (!formElement) return;
     const form = new FormData(formElement);
+    const nextDraft = {
+      date: String(form.get("inlineDate") || ""),
+      type: String(form.get("inlineType") || "") as EntryType,
+      song: String(form.get("inlineSong") || ""),
+      songBy: String(form.get("inlineSongBy") || ""),
+      text: String(form.get("inlineText") || ""),
+      textBy: String(form.get("inlineTextBy") || ""),
+      vorrade: String(form.get("inlineVorrade") || ""),
+      vorradeBy: String(form.get("inlineVorradeBy") || ""),
+      status: String(form.get("inlineStatus") || ""),
+      progressIntent: String(form.get("inlineProgressIntent") || "START"),
+      completed: form.get("inlineCompleted") === "on",
+      notes: String(form.get("inlineNotes") || ""),
+    };
+    setDraft(nextDraft);
     sessionStorage.setItem(
       "sermon-register-service-draft",
-      JSON.stringify({
-        date: String(form.get("inlineDate") || ""),
-        type: String(form.get("inlineType") || "") as EntryType,
-        song: String(form.get("inlineSong") || ""),
-        songBy: String(form.get("inlineSongBy") || ""),
-        text: String(form.get("inlineText") || ""),
-        textBy: String(form.get("inlineTextBy") || ""),
-        vorrade: String(form.get("inlineVorrade") || ""),
-        vorradeBy: String(form.get("inlineVorradeBy") || ""),
-        status: String(form.get("inlineStatus") || ""),
-        notes: String(form.get("inlineNotes") || ""),
-      }),
+      JSON.stringify(nextDraft),
     );
   }
 
@@ -1042,6 +1199,10 @@ export default function Home() {
     const vorrade = String(form.get("inlineVorrade") || "").trim();
     const vorradeBy = String(form.get("inlineVorradeBy") || "").trim();
     const status = String(form.get("inlineStatus") || "").trim();
+    const progressIntent = String(
+      form.get("inlineProgressIntent") || "START",
+    ).trim();
+    const completed = form.get("inlineCompleted") === "on";
     const notes = String(form.get("inlineNotes") || "");
     if (!date || !type || !text) {
       setSaveError("Complete Date, Type, And Text.");
@@ -1058,6 +1219,8 @@ export default function Home() {
         vorrade,
         vorradeBy,
         status,
+        progressIntent,
+        completed: completed ? "true" : "false",
         notes,
       });
       sessionStorage.removeItem("sermon-register-service-draft");
@@ -1082,6 +1245,20 @@ export default function Home() {
   function openService(service: Service) {
     setSaveError("");
     setEditKind(service.type);
+    setEditProgressIntent(
+      service.type === "Lehr" && service.progressStartId !== service.id
+        ? "CONTINUE"
+        : "START",
+    );
+    setEditProgressStatus(
+      service.progressStatus === "Completed"
+        ? "FINISHED"
+        : service.progressStatus === "In Progress"
+          ? "IN_PROGRESS"
+          : "",
+    );
+    setEditCompleted(service.completionServiceId === service.id);
+    setEditStatusChanged(false);
     setSelected(service);
   }
 
@@ -1247,6 +1424,8 @@ export default function Home() {
                         <option>All Services</option>
                         <option>Lehr</option>
                         <option>Gebet</option>
+                        <option>In Progress Lehrs</option>
+                        <option>Completed Lehrs</option>
                       </select>
                     </div>
                     <div className="col-6 col-lg-auto">
@@ -1302,6 +1481,8 @@ export default function Home() {
                           <option>All Services</option>
                           <option>Lehr</option>
                           <option>Gebet</option>
+                          <option>In Progress Lehrs</option>
+                          <option>Completed Lehrs</option>
                         </select>
                       </div>
                       <div className="col-6">
@@ -1371,6 +1552,12 @@ export default function Home() {
                               setDraft({
                                 ...draft,
                                 type: event.target.value as EntryType,
+                                status:
+                                  event.target.value === "Lehr"
+                                    ? draft.status || "IN_PROGRESS"
+                                    : "",
+                                progressIntent: "START",
+                                completed: false,
                               })
                             }
                             aria-label="New Service Type"
@@ -1470,12 +1657,14 @@ export default function Home() {
                               className="form-select form-select-sm"
                               form="inline-service-form"
                               name="inlineStatus"
-                              defaultValue={draft.status}
+                              value={draft.status || "IN_PROGRESS"}
+                              onChange={(event) =>
+                                setDraft({ ...draft, status: event.target.value })
+                              }
                               aria-label="New Lehr Status"
                             >
-                              <option value="">No Status</option>
                               <option value="IN_PROGRESS">In Progress</option>
-                              <option value="FINISHED">Finished</option>
+                              <option value="FINISHED">Completed</option>
                             </select>
                           ) : (
                             <span className="text-body-secondary">—</span>
@@ -1500,6 +1689,65 @@ export default function Home() {
                           </span>
                         </td>
                       </tr>
+
+                      {draft.type && draft.date && draft.text && (
+                        <tr className="inline-progress-helper-row">
+                          <td colSpan={11}>
+                            <div className="alert alert-info d-flex flex-wrap align-items-center gap-3 mb-0 py-2 px-3">
+                              <span className="fw-semibold">
+                                <i className="bi bi-diagram-3 me-2" />
+                                {inlineMatch
+                                  ? `Matching In-Progress Lehr Last Active ${inlineMatch.last_date}`
+                                  : "No In-Progress Lehr Found — This Service Starts A New Lehr"}
+                              </span>
+                              {draft.type === "Lehr" && inlineMatch && (
+                                <select
+                                  className="form-select form-select-sm w-auto"
+                                  form="inline-service-form"
+                                  name="inlineProgressIntent"
+                                  value={draft.progressIntent}
+                                  onChange={(event) =>
+                                    setDraft({
+                                      ...draft,
+                                      progressIntent: event.target.value,
+                                    })
+                                  }
+                                  aria-label="New Lehr Progress Choice"
+                                >
+                                  <option value="START">Start New Lehr</option>
+                                  <option value="CONTINUE">Continue Existing Lehr</option>
+                                </select>
+                              )}
+                              {(draft.type === "Gebet" ||
+                                (draft.type === "Lehr" &&
+                                  draft.progressIntent === "CONTINUE")) && (
+                                <div className="form-check mb-0">
+                                  <input
+                                    className="form-check-input"
+                                    form="inline-service-form"
+                                    id="inline-completed"
+                                    name="inlineCompleted"
+                                    type="checkbox"
+                                    checked={draft.completed}
+                                    onChange={(event) =>
+                                      setDraft({
+                                        ...draft,
+                                        completed: event.target.checked,
+                                      })
+                                    }
+                                  />
+                                  <label
+                                    className="form-check-label fw-semibold"
+                                    htmlFor="inline-completed"
+                                  >
+                                    Completed
+                                  </label>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
 
                       {visible.map((service) => (
                         <tr
@@ -1562,7 +1810,7 @@ export default function Home() {
                           <td className="note-cell notes-column">{service.notes}</td>
                           <td className="status-column">
                             {service.status && (
-                              <span className="badge text-bg-secondary">
+                              <span className={`badge ${statusBadgeClass(service.status)}`}>
                                 {service.status}
                               </span>
                             )}
@@ -2291,6 +2539,8 @@ export default function Home() {
                         id="service-date"
                         name="date"
                         type="date"
+                        value={newServiceDate}
+                        onChange={(event) => setNewServiceDate(event.target.value)}
                         required
                       />
                     </div>
@@ -2303,7 +2553,12 @@ export default function Home() {
                         id="service-type"
                         value={kind}
                         onChange={(event) =>
-                          setKind(event.target.value as EntryType)
+                          {
+                            setKind(event.target.value as EntryType);
+                            setNewProgressIntent("START");
+                            setNewCompleted(false);
+                            setNewStatus("IN_PROGRESS");
+                          }
                         }
                         required
                       >
@@ -2346,6 +2601,8 @@ export default function Home() {
                         name="text"
                         list="texts-list"
                         placeholder="Type A New Text"
+                        value={newServiceText}
+                        onChange={(event) => setNewServiceText(event.target.value)}
                         required
                       />
                     </div>
@@ -2387,21 +2644,59 @@ export default function Home() {
                             placeholder="Choose Or Type A New Person"
                           />
                         </div>
-                        <div className="col-md-6">
-                          <label className="form-label" htmlFor="service-status">
-                            Lehr Status
-                          </label>
-                          <select
-                            className="form-select"
-                            id="service-status"
-                            name="status"
-                            defaultValue=""
-                          >
-                            <option value="">No Status</option>
-                            <option value="IN_PROGRESS">In Progress</option>
-                            <option value="FINISHED">Finished</option>
-                          </select>
-                        </div>
+                        {newMatch && (
+                          <div className="col-12">
+                            <div className="card bg-body-tertiary border-0 mb-0">
+                              <div className="card-body py-3">
+                                <div className="fw-semibold mb-2">
+                                  Matching In-Progress Lehr Last Active {newMatch.last_date}
+                                </div>
+                                <select
+                                  className="form-select"
+                                  value={newProgressIntent}
+                                  onChange={(event) =>
+                                    setNewProgressIntent(event.target.value)
+                                  }
+                                >
+                                  <option value="START">Start New Lehr</option>
+                                  <option value="CONTINUE">Continue Existing Lehr</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {newProgressIntent === "START" ? (
+                          <div className="col-md-6">
+                            <label className="form-label" htmlFor="service-status">
+                              Lehr Status
+                            </label>
+                            <select
+                              className="form-select"
+                              id="service-status"
+                              name="status"
+                              value={newStatus}
+                              onChange={(event) => setNewStatus(event.target.value)}
+                            >
+                              <option value="IN_PROGRESS">In Progress</option>
+                              <option value="FINISHED">Completed</option>
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="col-md-6 d-flex align-items-end">
+                            <div className="form-check mb-2">
+                              <input
+                                className="form-check-input"
+                                id="service-completed"
+                                type="checkbox"
+                                checked={newCompleted}
+                                onChange={(event) => setNewCompleted(event.target.checked)}
+                              />
+                              <label className="form-check-label" htmlFor="service-completed">
+                                Completed
+                              </label>
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
                     {kind === "Gebet" && (
@@ -2409,25 +2704,23 @@ export default function Home() {
                         <div className="col-12">
                           <div className="alert alert-info mb-0">
                             <i className="bi bi-link-45deg me-2" />
-                            The Most Recent Earlier Lehr With The Same Text From
-                            The Previous Year Will Be Linked Automatically.
+                            {newMatch
+                              ? `Continues The In-Progress Lehr Last Active ${newMatch.last_date}.`
+                              : "No In-Progress Lehr Was Found. This Gebet Starts A New Lehr."}
                           </div>
                         </div>
                         <div className="col-md-6">
-                          <label className="form-label" htmlFor="service-linked-status">
-                            Lehr Status
-                          </label>
-                          <select
-                            className="form-select"
-                            id="service-linked-status"
-                            name="status"
-                            defaultValue="IN_PROGRESS"
-                          >
-                            <option value="IN_PROGRESS">In Progress</option>
-                            <option value="FINISHED">Finished</option>
-                          </select>
-                          <div className="form-text">
-                            Choose Finished On The Gebet That Completes The Lehr.
+                          <div className="form-check mt-2">
+                            <input
+                              className="form-check-input"
+                              id="service-linked-status"
+                              type="checkbox"
+                              checked={newCompleted}
+                              onChange={(event) => setNewCompleted(event.target.checked)}
+                            />
+                            <label className="form-check-label" htmlFor="service-linked-status">
+                              Completed
+                            </label>
                           </div>
                         </div>
                       </>
@@ -2597,24 +2890,19 @@ export default function Home() {
                           />
                         </div>
                         <div className="col-md-6">
-                          <label className="form-label" htmlFor="edit-service-status">
-                            Lehr Status
+                          <label className="form-label" htmlFor="edit-progress-intent">
+                            Lehr Progress Choice
                           </label>
                           <select
                             className="form-select"
-                            id="edit-service-status"
-                            name="editStatus"
-                            defaultValue={
-                              selected.status === "Finished"
-                                ? "FINISHED"
-                                : selected.status === "In Progress"
-                                  ? "IN_PROGRESS"
-                                  : ""
+                            id="edit-progress-intent"
+                            value={editProgressIntent}
+                            onChange={(event) =>
+                              setEditProgressIntent(event.target.value)
                             }
                           >
-                            <option value="">No Status</option>
-                            <option value="IN_PROGRESS">In Progress</option>
-                            <option value="FINISHED">Finished</option>
+                            <option value="START">Start New Lehr</option>
+                            <option value="CONTINUE">Continue Existing Lehr</option>
                           </select>
                         </div>
                         <div className="col-md-6">
@@ -2632,16 +2920,99 @@ export default function Home() {
                             placeholder="Choose Or Type A New Person"
                           />
                         </div>
+                        {editProgressIntent === "START" ? (
+                          <div className="col-12">
+                            <div className="card bg-body-tertiary border-0 mb-0">
+                              <div className="card-body d-flex flex-wrap align-items-center gap-3">
+                                <span className="form-label mb-0">Lehr Status</span>
+                                {editProgressStatus && (
+                                  <span
+                                    className={`badge ${statusBadgeClass(
+                                      editProgressStatus === "FINISHED"
+                                        ? "Completed"
+                                        : "In Progress",
+                                    )}`}
+                                  >
+                                    {editProgressStatus === "FINISHED"
+                                      ? "Completed"
+                                      : "In Progress"}
+                                  </span>
+                                )}
+                                {!editProgressStatus && (
+                                  <button
+                                    className="btn btn-outline-warning btn-sm"
+                                    type="button"
+                                    onClick={() => {
+                                      setEditProgressStatus("IN_PROGRESS");
+                                      setEditStatusChanged(true);
+                                    }}
+                                  >
+                                    Mark In Progress
+                                  </button>
+                                )}
+                                {editProgressStatus !== "FINISHED" && (
+                                  <button
+                                    className="btn btn-success btn-sm"
+                                    type="button"
+                                    onClick={() => {
+                                      setEditProgressStatus("FINISHED");
+                                      setEditStatusChanged(true);
+                                    }}
+                                  >
+                                    Mark Completed
+                                  </button>
+                                )}
+                                {editProgressStatus === "FINISHED" && (
+                                  <button
+                                    className="btn btn-outline-warning btn-sm"
+                                    type="button"
+                                    onClick={() => {
+                                      setEditProgressStatus("IN_PROGRESS");
+                                      setEditStatusChanged(true);
+                                    }}
+                                  >
+                                    Reopen Lehr
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="col-md-6 d-flex align-items-end">
+                            <div className="form-check mb-2">
+                              <input
+                                className="form-check-input"
+                                id="edit-service-completed"
+                                type="checkbox"
+                                checked={editCompleted}
+                                onChange={(event) => {
+                                  setEditCompleted(event.target.checked);
+                                  setEditStatusChanged(true);
+                                }}
+                              />
+                              <label
+                                className="form-check-label fw-semibold"
+                                htmlFor="edit-service-completed"
+                              >
+                                Completed
+                              </label>
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
                     {editKind === "Gebet" && (
                       <>
                         <div className="col-12">
-                          <div className="form-label">Automatically Linked Lehr</div>
+                          <div className="form-label">Lehr Progress</div>
                           {selected.linkedLehrId ? (
                             <div className="card bg-body-tertiary border-0 mb-0">
                               <div className="card-body py-2 px-3">
-                                <strong>{selected.linkedLehrText}</strong>
+                                <strong>
+                                  {selected.progressStartId === selected.id
+                                    ? "Started Lehr"
+                                    : "Continues Existing Lehr"}
+                                </strong>
                                 <span className="text-body-secondary ms-2">
                                   {selected.linkedLehrDate}
                                 </span>
@@ -2649,36 +3020,32 @@ export default function Home() {
                             </div>
                           ) : (
                             <div className="alert alert-warning mb-0">
-                              No Earlier Lehr With The Same Text Was Found Within
-                              The Previous Year.
+                              Saving This Gebet Will Start A New Lehr.
                             </div>
                           )}
                           <div className="form-text">
-                            The Match Is Updated Automatically When You Save.
+                            Matching Uses The Newest In-Progress Lehr With The Same
+                            Text And Activity Within Nine Months.
                           </div>
                         </div>
                         <div className="col-md-6">
-                          <label
-                            className="form-label"
-                            htmlFor="edit-service-linked-status"
-                          >
-                            Lehr Status
-                          </label>
-                          <select
-                            className="form-select"
-                            id="edit-service-linked-status"
-                            name="editStatus"
-                            defaultValue={
-                              selected.status === "Finished"
-                                ? "FINISHED"
-                                : "IN_PROGRESS"
-                            }
-                          >
-                            <option value="IN_PROGRESS">In Progress</option>
-                            <option value="FINISHED">Finished</option>
-                          </select>
-                          <div className="form-text">
-                            Choose Finished When This Gebet Completes The Linked Lehr.
+                          <div className="form-check mt-4">
+                            <input
+                              className="form-check-input"
+                              id="edit-service-linked-status"
+                              type="checkbox"
+                              checked={editCompleted}
+                              onChange={(event) => {
+                                setEditCompleted(event.target.checked);
+                                setEditStatusChanged(true);
+                              }}
+                            />
+                            <label
+                              className="form-check-label fw-semibold"
+                              htmlFor="edit-service-linked-status"
+                            >
+                              Completed
+                            </label>
                           </div>
                         </div>
                       </>
@@ -2696,6 +3063,64 @@ export default function Home() {
                       />
                     </div>
                   </div>
+
+                  {selected.progressStartId === selected.id &&
+                    selected.progressHistory.length > 0 && (
+                      <div className="card card-outline card-primary mt-4 mb-0">
+                        <div className="card-header">
+                          <h6 className="card-title mb-0">
+                            <i className="bi bi-diagram-3 me-2" />
+                            Lehr Progress
+                          </h6>
+                        </div>
+                        <div className="list-group list-group-flush">
+                          {selected.progressHistory.map((historyItem, index) => {
+                            const historyService = items.find(
+                              (service) => service.id === historyItem.id,
+                            );
+                            const role =
+                              historyItem.role === "STARTED_LEHR"
+                                ? "Started Lehr"
+                                : historyItem.role === "CONTINUED"
+                                  ? "Continued"
+                                  : historyItem.role === "COMPLETED_LEHR"
+                                    ? "Completed Lehr"
+                                    : "";
+                            return (
+                              <button
+                                className="list-group-item list-group-item-action d-flex flex-wrap align-items-center justify-content-between gap-2"
+                                key={historyItem.id}
+                                type="button"
+                                onClick={() => historyService && openService(historyService)}
+                              >
+                                <span>
+                                  <strong>
+                                    {index === 0
+                                      ? historyItem.type === "LEHR"
+                                        ? "Lehr"
+                                        : "Gebet"
+                                      : historyItem.type === "LEHR"
+                                        ? "Lehr Continuation"
+                                        : "Gebet"}
+                                  </strong>
+                                  <span className="text-body-secondary ms-2">
+                                    {new Date(`${historyItem.date}T12:00:00`).toLocaleDateString(
+                                      "en-US",
+                                      { month: "short", day: "numeric", year: "numeric" },
+                                    )}
+                                  </span>
+                                </span>
+                                {role && (
+                                  <span className={`badge ${statusBadgeClass(role)}`}>
+                                    {role}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
 
                   <div className="card bg-body-tertiary border-0 mt-4 mb-0">
                     <div className="card-body d-flex flex-wrap align-items-center justify-content-between gap-3">

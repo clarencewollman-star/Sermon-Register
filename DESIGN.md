@@ -22,7 +22,7 @@ The user-visible application name is **Lehr Register**, represented by an open-b
 - SQLite is the database.
 - Songs, Texts, Vorraden, and People are reusable master records.
 - Every service has exactly one Text.
-- A Lehr can continue through multiple Gebets before it is finished.
+- A Lehr may start at a Lehr or Gebet service and continue through multiple Lehrs or Gebets before it is completed.
 - A Gebet may be linked to at most one Lehr continuation.
 - Texts, services (including Lehr services), and Vorraden can each have multiple PDF attachments.
 - Search must support old sermons and reuse of records from prior years.
@@ -135,7 +135,7 @@ Opening a linked Song or Text from the Register displays its full-window library
 | `created_at` | text | required |
 | `updated_at` | text | required |
 
-A Text is reusable and does not contain service dates or completion state. `tags` uses the same normalized, comma-separated behavior as Song tags. `songs_for_text` is displayed as **Songs For This Sermon**; it is an intentionally unstructured text box and does not create Song relationships. The Texts view shows Text, Description, the first line of Scripture Reference, Tags, Times Used, Last Used, Notes, and PDF count. Times Used counts only Lehr services, not their continuing Gebets. The view can be sorted by Text, Tags, Times Used, or Last Used in either direction. After a new Text is created once with Save Text, leaving any Text editor field automatically saves the complete Text record and shows the result in the editor. A Text editor cannot close while a PDF upload is still running. A Text may be deleted only when no service of either type references it; the server enforces this rule and removes the unused Text's PDF attachments with it.
+A Text is reusable and does not contain service dates or completion state. `tags` uses the same normalized, comma-separated behavior as Song tags. `songs_for_text` is displayed as **Songs For This Sermon**; it is an intentionally unstructured text box and does not create Song relationships. The Texts view shows Text, Description, the first line of Scripture Reference, Tags, Times Used, Last Used, Notes, and PDF count. Times Used counts Lehr Progress starts, whether the starting service is a Lehr or Gebet; continuation services do not increase the count. Last Used is the date on which a Lehr Progress most recently started, not the latest continuation date. The view can be sorted by Text, Tags, Times Used, or Last Used in either direction. After a new Text is created once with Save Text, leaving any Text editor field automatically saves the complete Text record and shows the result in the editor. A Text editor cannot close while a PDF upload is still running. A Text may be deleted only when no service of either type references it; the server enforces this rule and removes the unused Text's PDF attachments with it.
 
 ### `vorraden`
 
@@ -163,30 +163,22 @@ The same active People list supplies type-ahead choices for Song By, Text By, an
 
 Service-entry type-ahead lists place the six most recently used unique Songs, Texts, and People first. Remaining choices follow alphabetically, and free typing still creates new reusable records through the normal save flow.
 
-### `lehr_gebet_links`
+### `lehr_progress` and `lehr_progress_services`
 
-| Column | Type | Rules |
-|---|---|---|
-| `id` | text | primary key |
-| `lehr_service_id` | text | required FK to `services` |
-| `gebet_service_id` | text | required FK to `services`; unique |
-| `sequence_number` | integer | required, greater than zero |
-| `lehr_status_after` | text | nullable; `IN_PROGRESS` or `FINISHED` after this Gebet |
-| `notes` | text | nullable |
-| `created_at` | text | required |
+Lehr Progress is independent of Service Type: either a Lehr or Gebet may start, continue, or complete the teaching. `lehr_progress` stores one overall nullable status (`IN_PROGRESS` or internal `FINISHED`, displayed as **Completed**), its Text, starting service, and optional completing service. `lehr_progress_services` stores the ordered member services, their durable start/continue/automatic intent, and whether a historical role label is visible. Exactly one service may complete a Lehr because `completion_service_id` is singular.
 
-Constraints:
+Behavior:
 
-- `(lehr_service_id, sequence_number)` is unique.
-- `(lehr_service_id, gebet_service_id)` is unique.
-- `gebet_service_id` is unique, so a Gebet cannot continue more than one Lehr.
-- The two service IDs must be different.
-- Application logic, inside a transaction, verifies that the parent is a Lehr and the child is a Gebet. SQLite cannot express this cross-row type rule with an ordinary `CHECK`; migration triggers may additionally enforce it.
-- Links are ordered and represent all Gebets used while working through a Lehr, not merely the final Gebet.
-- A Gebet is linked automatically to the most recent earlier Lehr with the same `text_id` when that Lehr occurred within the preceding year. The user does not manually choose a Lehr. If no qualifying Lehr exists, the Gebet remains unlinked and the editor explains why.
-- `services.lehr_status` is the authoritative completion flag. Changing it to `FINISHED` is explicit; the presence of links alone does not imply completion.
-- A text begins at a Lehr and may continue through one or more linked Gebets. The Gebet editor exposes the linked Lehr status so the Gebet that completes the text can explicitly mark the original Lehr as `FINISHED`.
-- Gebets do not own a separate completion status. The link records the Lehr status after that specific Gebet, while `services.lehr_status` stores the Lehr's current overall status. This preserves which Gebet finished the Lehr and makes a future unfinished-Lehr view a direct query for Lehr services whose status is not `FINISHED`.
+- Newly started Lehr Progress defaults to In Progress and may be completed at its starting service.
+- A Gebet automatically continues the newest in-progress Lehr with the same Text whose most recent activity falls within nine calendar months; if none exists, the Gebet automatically starts a Lehr.
+- A Lehr defaults to Start New Lehr. When a qualifying match exists, it may explicitly choose Continue Existing Lehr instead.
+- Same-day matching uses service entry order. Matching never selects blank or completed Lehr Progress.
+- A continuing service has one **Completed** checkbox. Earlier members display Continued; the one completing member displays Completed Lehr; a Gebet root displays Started Lehr.
+- Completing from the starting service editor uses the most recent continuation service as the completing service, or the starting service when no continuation exists. Reopening clears that marker but preserves history.
+- Status filters show one starting row per In Progress or Completed Lehr. Blank historical status is excluded from both filters.
+- Historical Gebets and their existing legacy links are not recalculated. Their Status cells remain blank until a deliberate edit or status action brings them into the new workflow.
+- A one-time deployment cleanup clears statuses whose most recent Lehr Progress activity is older than two calendar months. It preserves all service records and links, creates a timestamped SQLite backup first, records completion in `app_metadata`, and skips the cleanup if backup creation fails.
+- The legacy `lehr_gebet_links` table remains for compatibility and historical preservation; new behavior is represented by the general Lehr Progress tables.
 
 ### `service_attachments`
 
@@ -221,7 +213,7 @@ Authentication is required, but its exact implementation remains open. If creden
 - `services(service_date DESC)`
 - `services(service_type, service_date DESC)`
 - indexes on every service foreign key
-- `lehr_gebet_links(lehr_service_id, sequence_number)`
+- `lehr_progress(text_id, status)` and `lehr_progress_services(progress_id, sequence_number)`
 - case-insensitive lookup indexes for person name, Text/reference, Vorrade title, and Song title
 - attachment owner indexes
 
@@ -242,8 +234,8 @@ vorraden 1 ------< Lehr services
     |
     +----< vorrade_attachments
 
-Lehr service 1 ----< lehr_gebet_links >---- 1 Gebet service
-                     (ordered; Gebet unique)
+Lehr Progress 1 ----< lehr_progress_services >---- 1 service
+                      (ordered; one starting and at most one completing service)
 
 texts 1 --------< text_attachments
 ```
@@ -297,7 +289,7 @@ Core screens:
 3. Add/edit service, adapting fields for Lehr or Gebet.
 4. Service detail with PDFs and Lehr continuation history.
 5. Reusable Songs, Texts, and Vorraden lists/details. People remain a shared service-entry suggestion list without a separate navigation view. Text records support multiple private PDFs and service-entry autocomplete.
-6. In-progress Lehr view for linking ordered Gebets and marking completion.
+6. In-progress and completed Lehr filters with ordered Lehr Progress history and explicit completion.
 7. Backup/health information for the administrator.
 
 ## Future privacy-preserving AI retrieval (not in current scope)
@@ -326,7 +318,7 @@ Preparation now is limited to clean relational data, stable IDs, attachment meta
 ### Stage 1 — project and data foundation
 
 - Create the Next.js/TypeScript project, Drizzle schema, migrations, seed data, and local persistent directories.
-- Implement all constraints and tests, especially service-type rules and ordered Lehr/Gebet links.
+- Implement all constraints and tests, especially ordered Lehr Progress membership and singular completion.
 - Add environment configuration and repository exclusions for private data.
 
 ### Stage 2 — reusable records
@@ -338,7 +330,7 @@ Preparation now is limited to clean relational data, stable IDs, attachment meta
 
 - Build responsive Windows table and iPhone list/form experiences.
 - Add Lehr/Gebet-specific validation, filters, sorting, and service detail/history.
-- Support ordered Gebet links and explicit Lehr completion.
+- Support Lehr- or Gebet-started progress, nine-month matching, ordered continuations, and explicit completion.
 
 ### Stage 4 — private PDFs
 
@@ -369,12 +361,11 @@ These are intentionally unresolved; none requires redesigning the core schema un
 
 1. **Authentication and users:** single owner account or multiple named users? This determines local user administration and whether future per-user audit/permissions are needed.
 2. **Remote access:** private LAN only, a private VPN, or an internet-facing domain? This determines reverse-proxy and hardening details.
-3. **Lehr continuation semantics:** confirmed assumption for this design: every linked Gebet participates in continuing one Lehr, and the Lehr is separately marked finished. Confirm whether the final Gebet must be explicitly identified; if yes, add `completes_lehr` to the link with at most one true link per Lehr.
-4. **Vorrade rules:** can a Lehr omit a Vorrade, and when a Vorrade exists must Vorrade By exist? Both are currently optional as a pair.
-5. **Song identity:** the Title, including any number, is the user-facing identity. If multiple hymnals later require otherwise identical titles, add a `hymnals` table and distinguish them in the selector.
-6. **Attachment import:** PDF source naming and matching rules remain unknown.
-7. **Deletion policy:** unused Texts may be permanently deleted, while referenced Texts are restricted. Confirm the permanent-deletion and audit rules for the other reusable master records.
-8. **Server platform:** operating system, domain, TLS method, and backup destination remain deployment choices.
+3. **Vorrade rules:** can a Lehr omit a Vorrade, and when a Vorrade exists must Vorrade By exist? Both are currently optional as a pair.
+4. **Song identity:** the Title, including any number, is the user-facing identity. If multiple hymnals later require otherwise identical titles, add a `hymnals` table and distinguish them in the selector.
+5. **Attachment import:** PDF source naming and matching rules remain unknown.
+6. **Deletion policy:** unused Texts may be permanently deleted, while referenced Texts are restricted. Confirm the permanent-deletion and audit rules for the other reusable master records.
+7. **Server platform:** operating system, domain, TLS method, and backup destination remain deployment choices.
 
 ## Explicitly out of scope for the first release
 
